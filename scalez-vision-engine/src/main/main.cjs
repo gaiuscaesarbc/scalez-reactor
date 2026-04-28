@@ -1,5 +1,7 @@
 const path = require('node:path')
+const fs = require('node:fs')
 const { app, BrowserWindow, ipcMain } = require('electron')
+const { dialog } = require('electron')
 
 const isDev = !app.isPackaged
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
@@ -93,6 +95,37 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('app:get-platform', () => process.platform)
+
+  ipcMain.handle('clips:pick-video', async () => {
+    const windowRef = BrowserWindow.getFocusedWindow() || controlWindow
+    const result = await dialog.showOpenDialog(windowRef, {
+      title: 'Load Video Clip',
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'Video Files',
+          extensions: ['mp4', 'webm', 'mov', 'm4v', 'avi', 'mkv'],
+        },
+      ],
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    const filePath = result.filePaths[0]
+    return {
+      filePath,
+      clipName: path.basename(filePath),
+    }
+  })
+
+  ipcMain.handle('clips:path-exists', (_event, targetPath) => {
+    if (!targetPath || typeof targetPath !== 'string') {
+      return false
+    }
+    return fs.existsSync(targetPath)
+  })
 }
 
 app.whenReady().then(() => {

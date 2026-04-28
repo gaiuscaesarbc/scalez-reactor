@@ -27,6 +27,7 @@ function ControlShell() {
     setLayerBlendMode,
     clearLayer,
     triggerClip,
+    loadClipIntoSlot,
   } = useClipStore()
   const fps = useFps()
 
@@ -60,6 +61,7 @@ function ControlShell() {
             onBlendModeChange={setLayerBlendMode}
             onClear={clearLayer}
             onTrigger={triggerClip}
+            onLoad={loadClipIntoSlot}
           />
         ))}
       </section>

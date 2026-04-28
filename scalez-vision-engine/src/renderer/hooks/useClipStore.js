@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { loadStore, saveStore } from '../utils/storage'
 
 const LAYER_COUNT = 3
@@ -116,13 +116,113 @@ export function useClipStore() {
           return layer
         }
         const slot = layer.slots[slotIndex]
-        if (!slot || slot.status === 'empty') {
+        if (!slot || slot.status === 'empty' || slot.status === 'missing') {
           return layer
         }
         return { ...layer, activeSlotIndex: slotIndex }
       }),
     )
   }
+
+  const markSlotMissing = (layerIndex, slotIndex, isMissing) => {
+    updateLayers((current) =>
+      current.map((layer) => {
+        if (layer.layerIndex !== layerIndex) {
+          return layer
+        }
+
+        const slots = layer.slots.map((slot) => {
+          if (slot.slotIndex !== slotIndex || !slot.filePath) {
+            return slot
+          }
+
+          return {
+            ...slot,
+            status: isMissing ? 'missing' : 'loaded',
+          }
+        })
+
+        const activeIsMissing =
+          layer.activeSlotIndex === slotIndex && slots[slotIndex]?.status === 'missing'
+
+        return {
+          ...layer,
+          slots,
+          activeSlotIndex: activeIsMissing ? null : layer.activeSlotIndex,
+        }
+      }),
+    )
+  }
+
+  const loadClipIntoSlot = async (layerIndex, slotIndex) => {
+    const picked = await window.scalezApi?.pickVideoFile?.()
+    if (!picked?.filePath) {
+      return
+    }
+
+    updateLayers((current) =>
+      current.map((layer) => {
+        if (layer.layerIndex !== layerIndex) {
+          return layer
+        }
+
+        const slots = layer.slots.map((slot) => {
+          if (slot.slotIndex !== slotIndex) {
+            return slot
+          }
+          return {
+            ...slot,
+            clipName: picked.clipName,
+            filePath: picked.filePath,
+            status: 'loaded',
+          }
+        })
+
+        return {
+          ...layer,
+          slots,
+          activeSlotIndex: slotIndex,
+        }
+      }),
+    )
+
+    const exists = await window.scalezApi?.pathExists?.(picked.filePath)
+    if (exists === false) {
+      markSlotMissing(layerIndex, slotIndex, true)
+    }
+  }
+
+  useEffect(() => {
+    let canceled = false
+
+    async function validatePaths() {
+      const checks = []
+      for (const layer of layers) {
+        for (const slot of layer.slots) {
+          if (slot.filePath) {
+            checks.push({
+              layerIndex: layer.layerIndex,
+              slotIndex: slot.slotIndex,
+              filePath: slot.filePath,
+            })
+          }
+        }
+      }
+
+      for (const check of checks) {
+        const exists = await window.scalezApi?.pathExists?.(check.filePath)
+        if (!canceled && exists === false) {
+          markSlotMissing(check.layerIndex, check.slotIndex, true)
+        }
+      }
+    }
+
+    validatePaths()
+
+    return () => {
+      canceled = true
+    }
+  }, [])
 
   const visibleLayers = useMemo(() => layers.filter((layer) => layer.visible), [layers])
 
@@ -134,5 +234,6 @@ export function useClipStore() {
     setLayerBlendMode,
     clearLayer,
     triggerClip,
+    loadClipIntoSlot,
   }
 }

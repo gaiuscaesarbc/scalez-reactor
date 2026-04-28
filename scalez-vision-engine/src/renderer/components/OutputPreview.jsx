@@ -1,6 +1,17 @@
 import { blendModeToCss } from '../utils/blendModes'
 import AudioMeter from './AudioMeter'
 
+function toFileUrl(filePath) {
+  if (!filePath) {
+    return ''
+  }
+  const normalized = filePath.replace(/\\/g, '/')
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    return `file:///${normalized}`
+  }
+  return `file://${normalized}`
+}
+
 function LayerPreviewBadge({ layer }) {
   const active =
     typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
@@ -23,16 +34,42 @@ export default function OutputPreview({ layers, fps, bassLevel }) {
       <div className="output-preview" role="img" aria-label="Live output preview">
         <div className="preview-backdrop" />
 
-        {layers.map((layer) => (
-          <div
-            key={layer.label}
-            className="preview-layer-fallback"
-            style={{
-              opacity: layer.visible ? layer.opacity * 0.18 : 0,
-              mixBlendMode: blendModeToCss(layer.blendMode),
-            }}
-          />
-        ))}
+        {layers.map((layer) => {
+          const active =
+            typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
+          const canRenderVideo =
+            layer.visible && active && active.status === 'loaded' && Boolean(active.filePath)
+
+          if (!canRenderVideo) {
+            return (
+              <div
+                key={layer.label}
+                className="preview-layer-fallback"
+                style={{
+                  opacity: layer.visible ? layer.opacity * 0.1 : 0,
+                  mixBlendMode: blendModeToCss(layer.blendMode),
+                }}
+              />
+            )
+          }
+
+          return (
+            <video
+              key={`${layer.label}-${active.filePath}`}
+              className="preview-layer-video"
+              src={toFileUrl(active.filePath)}
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="auto"
+              style={{
+                opacity: layer.opacity,
+                mixBlendMode: blendModeToCss(layer.blendMode),
+              }}
+            />
+          )
+        })}
 
         <div className="preview-overlays">
           <div className="overlay-row">

@@ -8,6 +8,7 @@ export default function LayerStrip({
   onBlendModeChange,
   onClear,
   onTrigger,
+  onLoad,
 }) {
   const activeClip =
     typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
@@ -69,6 +70,7 @@ export default function LayerStrip({
               slot={slot}
               isActive={layer.activeSlotIndex === slot.slotIndex}
               onTrigger={onTrigger}
+              onLoad={onLoad}
             />
           ))}
         </div>
