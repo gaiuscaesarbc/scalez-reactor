@@ -8,6 +8,20 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
 
 let controlWindow = null
 let outputWindow = null
+let sharedOutputState = {
+  layers: [],
+  masterFx: {
+    glow: 0.25,
+    strobe: 0,
+    shake: 0,
+    brightness: 1,
+  },
+  blackout: false,
+  audio: {
+    bassLevel: 0.2,
+  },
+  updatedAt: Date.now(),
+}
 
 function getPreloadPath() {
   return path.join(__dirname, 'preload.cjs')
@@ -69,6 +83,12 @@ function createOutputWindow() {
 
   loadRendererWindow(outputWindow, 'output')
 
+  outputWindow.webContents.on('did-finish-load', () => {
+    if (outputWindow && !outputWindow.isDestroyed()) {
+      outputWindow.webContents.send('output:state-update', sharedOutputState)
+    }
+  })
+
   outputWindow.on('closed', () => {
     outputWindow = null
   })
@@ -126,6 +146,24 @@ function registerIpcHandlers() {
     }
     return fs.existsSync(targetPath)
   })
+
+  ipcMain.on('output:state-publish', (_event, nextState) => {
+    if (!nextState || typeof nextState !== 'object') {
+      return
+    }
+
+    sharedOutputState = {
+      ...sharedOutputState,
+      ...nextState,
+      updatedAt: Date.now(),
+    }
+
+    if (outputWindow && !outputWindow.isDestroyed()) {
+      outputWindow.webContents.send('output:state-update', sharedOutputState)
+    }
+  })
+
+  ipcMain.handle('output:state-get', () => sharedOutputState)
 }
 
 app.whenReady().then(() => {

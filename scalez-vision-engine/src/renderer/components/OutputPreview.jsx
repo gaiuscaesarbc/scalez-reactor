@@ -23,15 +23,35 @@ function LayerPreviewBadge({ layer }) {
   )
 }
 
-export default function OutputPreview({ layers, fps, bassLevel }) {
+export default function OutputPreview({
+  layers,
+  fps,
+  bassLevel,
+  masterFx,
+  blackout,
+  showOverlays,
+}) {
   const activeCount = layers.reduce(
     (count, layer) => (typeof layer.activeSlotIndex === 'number' ? count + 1 : count),
     0,
   )
 
+  const glowStrength = masterFx.glow + bassLevel * 0.2
+  const strobeOpacity = blackout ? 0 : Math.min(0.8, masterFx.strobe * 0.85)
+
   return (
     <section className="output-preview-wrap">
-      <div className="output-preview" role="img" aria-label="Live output preview">
+      <div
+        className={`output-preview ${masterFx.shake > 0 ? 'fx-shake' : ''}`}
+        role="img"
+        aria-label="Live output preview"
+        style={{
+          filter: `brightness(${masterFx.brightness})`,
+          '--shake-px': `${(masterFx.shake * 12).toFixed(2)}px`,
+          '--glow-px': `${(12 + glowStrength * 60).toFixed(2)}px`,
+          '--glow-alpha': (0.14 + glowStrength * 0.4).toFixed(3),
+        }}
+      >
         <div className="preview-backdrop" />
 
         {layers.map((layer) => {
@@ -71,23 +91,29 @@ export default function OutputPreview({ layers, fps, bassLevel }) {
           )
         })}
 
-        <div className="preview-overlays">
-          <div className="overlay-row">
-            <div className="overlay-chip">FPS {fps}</div>
-            <div className="overlay-chip">Active Layers {activeCount}</div>
-          </div>
-          <div className="overlay-row">
-            <AudioMeter bassLevel={bassLevel} />
-            <div className="overlay-stack">
-              {layers
-                .slice()
-                .reverse()
-                .map((layer) => (
-                  <LayerPreviewBadge key={layer.label} layer={layer} />
-                ))}
+        <div className="fx-glow-layer" />
+        <div className="fx-strobe-layer" style={{ opacity: strobeOpacity }} />
+        <div className={`fx-blackout-layer ${blackout ? 'is-on' : ''}`} />
+
+        {showOverlays ? (
+          <div className="preview-overlays">
+            <div className="overlay-row">
+              <div className="overlay-chip">FPS {fps}</div>
+              <div className="overlay-chip">Active Layers {activeCount}</div>
+            </div>
+            <div className="overlay-row">
+              <AudioMeter bassLevel={bassLevel} />
+              <div className="overlay-stack">
+                {layers
+                  .slice()
+                  .reverse()
+                  .map((layer) => (
+                    <LayerPreviewBadge key={layer.label} layer={layer} />
+                  ))}
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </section>
   )
