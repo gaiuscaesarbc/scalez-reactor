@@ -72,6 +72,7 @@ function persistLayers(layers) {
 
 export function useClipStore() {
   const [layers, setLayers] = useState(() => normalizeStore(loadStore()))
+  const [midiMappings, setMidiMappings] = useState({})
 
   const updateLayers = (mutator) => {
     setLayers((current) => {
@@ -260,7 +261,7 @@ export function useClipStore() {
 
   const visibleLayers = useMemo(() => layers.filter((layer) => layer.visible), [layers])
 
-  const saveShow = (showName) => {
+  const saveShow = (showName, midiMappings_) => {
     const showData = {
       name: showName,
       timestamp: new Date().toISOString(),
@@ -275,6 +276,7 @@ export function useClipStore() {
           status: slot.status,
         })),
       })),
+      midiMappings: midiMappings_ || midiMappings || {},
     }
     const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
     const existingIdx = shows.findIndex((s) => s.name === showName)
@@ -288,7 +290,7 @@ export function useClipStore() {
     return showData
   }
 
-  const autosaveShow = () => {
+  const autosaveShow = (midiMappings_) => {
     const autosaveName = '__autosave__'
     const showData = {
       name: autosaveName,
@@ -304,6 +306,7 @@ export function useClipStore() {
           status: slot.status,
         })),
       })),
+      midiMappings: midiMappings_ || midiMappings || {},
     }
     localStorage.setItem('scalez_autosave', JSON.stringify(showData))
   }
@@ -344,6 +347,9 @@ export function useClipStore() {
             }
           }),
         )
+        if (showData.midiMappings) {
+          setMidiMappings(showData.midiMappings)
+        }
         return true
       } catch (e) {
         return false
@@ -384,6 +390,11 @@ export function useClipStore() {
         }
       }),
     )
+    if (show.midiMappings) {
+      setMidiMappings(show.midiMappings)
+    } else {
+      setMidiMappings({})
+    }
     return true
   }
 
@@ -409,6 +420,8 @@ export function useClipStore() {
   return {
     layers,
     visibleLayers,
+    midiMappings,
+    setMidiMappings,
     setLayerVisible,
     setLayerOpacity,
     setLayerBlendMode,

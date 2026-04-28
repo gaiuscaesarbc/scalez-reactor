@@ -4,11 +4,13 @@ import MasterFxPanel from './components/MasterFxPanel'
 import OutputPreview from './components/OutputPreview'
 import TestModePanel from './components/TestModePanel'
 import ShowManager from './components/ShowManager'
+import MidiPanel from './components/MidiPanel'
 import { useClipStore } from './hooks/useClipStore'
 import { useFps } from './hooks/useFps'
 import { useSessionTimer } from './hooks/useSessionTimer'
 import { useAudioAnalysis } from './hooks/useAudioAnalysis'
 import { useHotkeys } from './hooks/useHotkeys'
+import { useMidiController } from './hooks/useMidiController'
 import {
   buildOutputState,
   DEFAULT_MASTER_FX,
@@ -46,6 +48,8 @@ function OutputShell() {
 function ControlShell() {
   const {
     layers,
+    midiMappings,
+    setMidiMappings,
     setLayerVisible,
     setLayerOpacity,
     setLayerBlendMode,
@@ -58,7 +62,9 @@ function ControlShell() {
     getSavedShows,
     deleteShow,
     restoreLastShow,
+    autosaveShow,
   } = useClipStore()
+  const midiState = useMidiController()
   const [masterFx, setMasterFx] = useState(DEFAULT_MASTER_FX)
   const [blackout, setBlackout] = useState(false)
   const [audioSensitivity, setAudioSensitivity] = useState(1)
@@ -75,6 +81,92 @@ function ControlShell() {
     restoreLastShow()
     setSavedShows(getSavedShows())
   }, [])
+
+  // Load MIDI mappings when show changes
+  useEffect(() => {
+    if (midiMappings && Object.keys(midiMappings).length > 0) {
+      midiState.loadMappings(midiMappings)
+    }
+  }, [])
+
+  // Listen for MIDI commands and execute them
+  useEffect(() => {
+    const handleMidiCommand = (event) => {
+      const { mapping, midiValue } = event.detail
+
+      switch (mapping.action) {
+        case 'blackout':
+          setBlackout((current) => !current)
+          break
+
+        case 'reset':
+          setMasterFx(DEFAULT_MASTER_FX)
+          break
+
+        case 'safe-mode':
+          setSafeMode((current) => !current)
+          break
+
+        case 'layer-1-slots':
+          handleTriggerByKeyNumber(0, midiValue % 10)
+          break
+
+        case 'layer-2-slots':
+          handleTriggerByKeyNumber(1, midiValue % 10)
+          break
+
+        case 'layer-3-slots':
+          handleTriggerByKeyNumber(2, midiValue % 10)
+          break
+
+        case 'glow':
+          setMasterFx((current) => ({ ...current, glow: Math.min(1, midiValue / 127) }))
+          break
+
+        case 'strobe':
+          setMasterFx((current) => ({ ...current, strobe: Math.min(1, midiValue / 127) }))
+          break
+
+        case 'shake':
+          setMasterFx((current) => ({ ...current, shake: Math.min(1, midiValue / 127) }))
+          break
+
+        case 'brightness':
+          setMasterFx((current) => ({
+            ...current,
+            brightness: 0.5 + (midiValue / 127) * 1.5,
+          }))
+          break
+
+        case 'layer-1-opacity':
+          setLayerOpacity(0, midiValue / 127)
+          break
+
+        case 'layer-2-opacity':
+          setLayerOpacity(1, midiValue / 127)
+          break
+
+        case 'layer-3-opacity':
+          setLayerOpacity(2, midiValue / 127)
+          break
+
+        default:
+          break
+      }
+    }
+
+    window.addEventListener('midi-command', handleMidiCommand)
+    return () => window.removeEventListener('midi-command', handleMidiCommand)
+  }, [setLayerOpacity])
+
+  // Autosave MIDI mappings with show data
+  useEffect(() => {
+    const autosaveInterval = setInterval(() => {
+      autosaveShow(midiState.getMappings())
+    }, 30000)
+
+    return () => clearInterval(autosaveInterval)
+  }, [autosaveShow, midiState])
 
   const { bassLevel, isActive: audioActive, permissionDenied, startAudio, stopAudio } = useAudioAnalysis({
     sensitivity: audioSensitivity,
@@ -174,14 +266,18 @@ function ControlShell() {
           </div>
         </div>
         <div className="header-actions">
+          <MidiPanel midiState={midiState} />
           <ShowManager
             savedShows={savedShows}
             onSaveShow={(name) => {
-              saveShow(name)
+              saveShow(name, midiState.getMappings())
               setSavedShows(getSavedShows())
             }}
             onLoadShow={(name) => {
               loadShow(name)
+              if (midiMappings) {
+                midiState.loadMappings(midiMappings)
+              }
             }}
             onDeleteShow={(name) => {
               deleteShow(name)

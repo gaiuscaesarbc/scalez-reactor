@@ -923,6 +923,306 @@ body {
   gap: 8px;
 }
 
+/* MIDI Panel */
+.midi-panel {
+  position: relative;
+}
+
+.midi-btn {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, var(--blue), #2896ff);
+  border: 1px solid rgba(74, 180, 255, 0.4);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.midi-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #5ac4ff, #32a4ff);
+  box-shadow: 0 0 16px rgba(74, 180, 255, 0.5);
+  transform: translateY(-2px);
+}
+
+.midi-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.midi-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.midi-btn--primary {
+  background: linear-gradient(135deg, var(--purple), #9d7dff);
+  border-color: rgba(141, 109, 255, 0.4);
+}
+
+.midi-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #9d7dff, #ad8dff);
+  box-shadow: 0 0 16px rgba(141, 109, 255, 0.5);
+}
+
+.midi-btn--small {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+}
+
+.midi-btn--mini {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  background: rgba(255, 70, 109, 0.2);
+  border-color: rgba(255, 70, 109, 0.4);
+}
+
+.midi-btn--mini:hover {
+  background: rgba(255, 70, 109, 0.35);
+  box-shadow: 0 0 12px rgba(255, 70, 109, 0.4);
+}
+
+.midi-btn--delete {
+  background: rgba(255, 70, 109, 0.15);
+  border-color: rgba(255, 70, 109, 0.3);
+}
+
+.midi-btn--delete:hover {
+  background: rgba(255, 70, 109, 0.3);
+}
+
+.midi-btn--danger {
+  background: linear-gradient(135deg, rgba(255, 70, 109, 0.4), rgba(255, 100, 139, 0.4));
+  border-color: rgba(255, 70, 109, 0.6);
+  color: #ff8899;
+  margin-top: 12px;
+}
+
+.midi-btn--danger:hover {
+  background: linear-gradient(135deg, rgba(255, 70, 109, 0.6), rgba(255, 100, 139, 0.6));
+  box-shadow: 0 0 16px rgba(255, 70, 109, 0.4);
+}
+
+.midi-btn--learning {
+  background: linear-gradient(135deg, #ffb347, #ff9500);
+  border-color: rgba(255, 180, 71, 0.6);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.midi-btn--mapped {
+  background: linear-gradient(135deg, #47b881, #2a9d6f);
+  border-color: rgba(71, 184, 129, 0.6);
+}
+
+.midi-btn--unavailable {
+  background: rgba(100, 100, 100, 0.3);
+  border-color: rgba(150, 150, 150, 0.3);
+  cursor: not-allowed;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(255, 180, 71, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(255, 180, 71, 0.8);
+  }
+}
+
+.midi-panel__content {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 8px;
+  width: 420px;
+  max-height: 580px;
+  overflow-y: auto;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 1001;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.midi-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.midi-panel__header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.midi-panel__close {
+  background: none;
+  border: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 4px 8px;
+  transition: color 0.2s;
+}
+
+.midi-panel__close:hover {
+  color: var(--text);
+}
+
+.midi-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.midi-section--footer {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.midi-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.midi-select {
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.midi-select:hover {
+  border-color: var(--blue);
+  box-shadow: 0 0 8px rgba(74, 180, 255, 0.2);
+}
+
+.midi-select:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 12px rgba(74, 180, 255, 0.3);
+}
+
+.midi-note {
+  font-size: 0.8rem;
+  color: var(--text-soft);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.midi-status {
+  font-size: 0.8rem;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: rgba(71, 184, 129, 0.15);
+  color: #47b881;
+  border-left: 3px solid #47b881;
+}
+
+.midi-status--active {
+  background: rgba(71, 184, 129, 0.2);
+  color: #5ccc99;
+}
+
+.midi-learn-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.midi-learn-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  background: rgba(8, 14, 34, 0.4);
+  border: 1px solid rgba(74, 180, 255, 0.15);
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.midi-learn-item:hover {
+  background: rgba(8, 14, 34, 0.6);
+  border-color: rgba(74, 180, 255, 0.3);
+}
+
+.midi-learn-label {
+  font-size: 0.85rem;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.midi-mappings {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.midi-mapping-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px;
+  background: rgba(141, 109, 255, 0.1);
+  border: 1px solid rgba(141, 109, 255, 0.2);
+  border-radius: 6px;
+  gap: 8px;
+}
+
+.midi-mapping-action {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+}
+
+.midi-mapping-keys {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.midi-key-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  background: rgba(74, 180, 255, 0.2);
+  border: 1px solid rgba(74, 180, 255, 0.4);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: var(--blue);
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+}
+
 @media (max-width: 1000px) {
   .master-fx-grid {
     grid-template-columns: 1fr;
@@ -945,5 +1245,10 @@ body {
 
   .fx-grid {
     grid-template-columns: 1fr;
+  }
+
+  .midi-panel__content {
+    width: 90vw;
+    max-width: 100%;
   }
 }
