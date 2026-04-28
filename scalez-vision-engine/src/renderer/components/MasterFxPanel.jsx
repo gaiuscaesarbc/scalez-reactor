@@ -13,6 +13,8 @@ export default function MasterFxPanel({
   onFxChange,
   onToggleBlackout,
   onReset,
+  safeMode,
+  onSafeModeChange,
   audioPanel,
 }) {
   return (
@@ -23,6 +25,14 @@ export default function MasterFxPanel({
           <div className="hotkey-hint">Space=Blackout R=Reset 1-9=L1 Shift+1-9=L2 Ctrl+1-9=L3</div>
         </div>
         <div className="bottom-panel__actions">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={safeMode}
+              onChange={(event) => onSafeModeChange(event.target.checked)}
+            />
+            Safe Mode
+          </label>
           <button type="button" className="danger-pill" onClick={onToggleBlackout}>
             {blackout ? 'Disable Blackout' : 'Blackout'}
           </button>

@@ -10,6 +10,8 @@ function makeDefaultSlot(slotIndex) {
     clipName: '',
     filePath: '',
     status: 'empty',
+    errorMessage: '',
+    preloadedVideoRef: null,
   }
 }
 
@@ -47,6 +49,8 @@ function normalizeStore(stored) {
         clipName: storedSlot.clipName || '',
         filePath: storedSlot.filePath || '',
         status: storedSlot.status || 'empty',
+        errorMessage: storedSlot.errorMessage || '',
+        preloadedVideoRef: null,
       }
     })
 
@@ -116,7 +120,7 @@ export function useClipStore() {
           return layer
         }
         const slot = layer.slots[slotIndex]
-        if (!slot || slot.status === 'empty' || slot.status === 'missing') {
+        if (!slot || slot.status === 'empty' || slot.status === 'missing' || slot.status === 'failed') {
           return layer
         }
         return { ...layer, activeSlotIndex: slotIndex }
@@ -149,6 +153,36 @@ export function useClipStore() {
           ...layer,
           slots,
           activeSlotIndex: activeIsMissing ? null : layer.activeSlotIndex,
+        }
+      }),
+    )
+  }
+
+  const markSlotFailed = (layerIndex, slotIndex, errorMessage) => {
+    updateLayers((current) =>
+      current.map((layer) => {
+        if (layer.layerIndex !== layerIndex) {
+          return layer
+        }
+
+        const slots = layer.slots.map((slot) => {
+          if (slot.slotIndex !== slotIndex) {
+            return slot
+          }
+
+          return {
+            ...slot,
+            status: 'failed',
+            errorMessage,
+          }
+        })
+
+        const activeFailed = layer.activeSlotIndex === slotIndex && slots[slotIndex]?.status === 'failed'
+
+        return {
+          ...layer,
+          slots,
+          activeSlotIndex: activeFailed ? null : layer.activeSlotIndex,
         }
       }),
     )
@@ -235,5 +269,6 @@ export function useClipStore() {
     clearLayer,
     triggerClip,
     loadClipIntoSlot,
+    markSlotFailed,
   }
 }

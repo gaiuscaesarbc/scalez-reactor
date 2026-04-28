@@ -49,11 +49,13 @@ function ControlShell() {
     clearLayer,
     triggerClip,
     loadClipIntoSlot,
+    markSlotFailed,
   } = useClipStore()
   const [masterFx, setMasterFx] = useState(DEFAULT_MASTER_FX)
   const [blackout, setBlackout] = useState(false)
   const [audioSensitivity, setAudioSensitivity] = useState(1)
   const [audioSmoothing, setAudioSmoothing] = useState(0.8)
+  const [safeMode, setSafeMode] = useState(false)
   const fps = useFps()
 
   const { bassLevel, isActive: audioActive, permissionDenied, startAudio, stopAudio } = useAudioAnalysis({
@@ -107,12 +109,24 @@ function ControlShell() {
 
   const bassBoost = bassLevel * 0.35
   const effectiveMasterFx = useMemo(
-    () => ({
-      ...masterFx,
-      glow: Math.min(1, masterFx.glow + bassBoost),
-      brightness: masterFx.brightness + bassBoost * 0.25,
-    }),
-    [masterFx, bassBoost],
+    () => {
+      const base = {
+        ...masterFx,
+        glow: Math.min(1, masterFx.glow + bassBoost),
+        brightness: masterFx.brightness + bassBoost * 0.25,
+      }
+      if (safeMode) {
+        return {
+          ...base,
+          strobe: 0,
+          glow: base.glow * 0.5,
+          shake: base.shake * 0.5,
+          brightness: base.brightness,
+        }
+      }
+      return base
+    },
+    [masterFx, bassBoost, safeMode],
   )
 
   useEffect(() => {
@@ -148,6 +162,7 @@ function ControlShell() {
         masterFx={effectiveMasterFx}
         blackout={blackout}
         showOverlays
+        markSlotFailed={markSlotFailed}
       />
 
       <section className="layer-stack">
@@ -171,6 +186,8 @@ function ControlShell() {
         onFxChange={setFxValue}
         onToggleBlackout={() => setBlackout((current) => !current)}
         onReset={resetFx}
+        safeMode={safeMode}
+        onSafeModeChange={setSafeMode}
         audioPanel={{
           bassLevel,
           isActive: audioActive,
