@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import LayerStrip from './components/LayerStrip'
 import MasterFxPanel from './components/MasterFxPanel'
 import OutputPreview from './components/OutputPreview'
 import { useClipStore } from './hooks/useClipStore'
 import { useFps } from './hooks/useFps'
+import { useAudioAnalysis } from './hooks/useAudioAnalysis'
+import { useHotkeys } from './hooks/useHotkeys'
 import {
   buildOutputState,
   DEFAULT_MASTER_FX,
@@ -50,9 +52,17 @@ function ControlShell() {
   } = useClipStore()
   const [masterFx, setMasterFx] = useState(DEFAULT_MASTER_FX)
   const [blackout, setBlackout] = useState(false)
+  const [audioSensitivity, setAudioSensitivity] = useState(1)
+  const [audioSmoothing, setAudioSmoothing] = useState(0.8)
   const fps = useFps()
 
+  const { bassLevel, isActive: audioActive, permissionDenied, startAudio, stopAudio } = useAudioAnalysis({
+    sensitivity: audioSensitivity,
+    smoothing: audioSmoothing,
+  })
+
   const displayLayers = useMemo(() => layers.slice().reverse(), [layers])
+  const scrollContainersRef = useRef({})
 
   const setFxValue = (key, value) => {
     setMasterFx((current) => ({
@@ -65,15 +75,55 @@ function ControlShell() {
     setMasterFx(DEFAULT_MASTER_FX)
   }
 
+  const handleTriggerByKeyNumber = (layerIndex, slotNum) => {
+    if (slotNum >= 0 && slotNum < 9) {
+      const layer = layers[layerIndex]
+      if (layer && layer.slots[slotNum]) {
+        triggerClip(layerIndex, slotNum)
+      }
+    }
+  }
+
+  const handleScrollClips = (direction) => {
+    const scrollAmount = 140 + 8
+    Object.values(scrollContainersRef.current).forEach((container) => {
+      if (container) {
+        container.scrollBy({
+          left: scrollAmount * direction,
+          behavior: 'smooth',
+        })
+      }
+    })
+  }
+
+  useHotkeys({
+    onBlackoutToggle: () => setBlackout((current) => !current),
+    onResetFx: resetFx,
+    onTriggerLayer1: (slot) => handleTriggerByKeyNumber(0, slot),
+    onTriggerLayer2: (slot) => handleTriggerByKeyNumber(1, slot),
+    onTriggerLayer3: (slot) => handleTriggerByKeyNumber(2, slot),
+    onScrollClips: handleScrollClips,
+  })
+
+  const bassBoost = bassLevel * 0.35
+  const effectiveMasterFx = useMemo(
+    () => ({
+      ...masterFx,
+      glow: Math.min(1, masterFx.glow + bassBoost),
+      brightness: masterFx.brightness + bassBoost * 0.25,
+    }),
+    [masterFx, bassBoost],
+  )
+
   useEffect(() => {
     const nextState = buildOutputState({
       layers,
-      masterFx,
+      masterFx: effectiveMasterFx,
       blackout,
-      bassLevel: 0.2,
+      bassLevel,
     })
     window.scalezApi?.publishOutputState?.(nextState)
-  }, [layers, masterFx, blackout])
+  }, [layers, effectiveMasterFx, blackout, bassLevel])
 
   return (
     <main className="control-shell">
@@ -94,8 +144,8 @@ function ControlShell() {
       <OutputPreview
         layers={layers}
         fps={fps}
-        bassLevel={0.2}
-        masterFx={masterFx}
+        bassLevel={bassLevel}
+        masterFx={effectiveMasterFx}
         blackout={blackout}
         showOverlays
       />
@@ -121,6 +171,17 @@ function ControlShell() {
         onFxChange={setFxValue}
         onToggleBlackout={() => setBlackout((current) => !current)}
         onReset={resetFx}
+        audioPanel={{
+          bassLevel,
+          isActive: audioActive,
+          permissionDenied,
+          sensitivity: audioSensitivity,
+          smoothing: audioSmoothing,
+          onStartAudio: startAudio,
+          onStopAudio: stopAudio,
+          onSensitivityChange: setAudioSensitivity,
+          onSmoothingChange: setAudioSmoothing,
+        }}
       />
     </main>
   )

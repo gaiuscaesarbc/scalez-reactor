@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { BLEND_MODES } from '../utils/blendModes'
 import ClipSlot from './ClipSlot'
 
@@ -10,6 +11,7 @@ export default function LayerStrip({
   onTrigger,
   onLoad,
 }) {
+  const scrollContainerRef = useRef(null)
   const activeClip =
     typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
 
@@ -61,7 +63,11 @@ export default function LayerStrip({
         </div>
       </div>
 
-      <div className="clip-grid-scroll">
+      <div
+        className="clip-grid-scroll"
+        ref={scrollContainerRef}
+        data-scroll-layer={layer.layerIndex}
+      >
         <div className="clip-grid" role="list" aria-label={`${layer.label} clip slots`}>
           {layer.slots.map((slot) => (
             <ClipSlot
