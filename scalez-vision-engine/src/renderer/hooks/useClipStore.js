@@ -409,15 +409,51 @@ export function useClipStore() {
               layerIndex: layer.layerIndex,
               slotIndex: slot.slotIndex,
               filePath: slot.filePath,
+              status: slot.status,
             })
           }
         }
       }
 
       for (const check of checks) {
+        if (canceled) {
+          break
+        }
+
         const exists = await window.scalezApi?.pathExists?.(check.filePath)
-        if (!canceled && exists === false) {
+        if (canceled) {
+          break
+        }
+
+        if (exists === false) {
           markSlotMissing(check.layerIndex, check.slotIndex, true)
+          continue
+        }
+
+        // Re-probe any clip that was previously marked loaded so that files
+        // encoded with unsupported codecs (e.g. HEVC/H.265 MP4) get caught
+        // at startup rather than failing silently during playback.
+        if (check.status === 'loaded') {
+          const probeResult = await probeVideoPlayable(check.filePath)
+          if (canceled) {
+            break
+          }
+
+          if (!probeResult.ok) {
+            const extension = getFileExtension(check.filePath)
+            const issueType = classifyVideoIssue({ extension, errorCode: probeResult.errorCode })
+            const hint =
+              issueType === 'unsupported'
+                ? 'Unsupported format/codec. Prefer MP4 (H.264) or WebM (VP8/VP9).'
+                : 'Video failed to reload. Check file path and permissions.'
+            const message = `${hint} ${probeResult.message || ''}`.trim()
+            markSlotFailed(check.layerIndex, check.slotIndex, message, issueType)
+            if (import.meta.env.DEV) {
+              console.warn(
+                `[video:startup-reprobe] failed layer=${check.layerIndex + 1} slot=${check.slotIndex + 1} code=${probeResult.errorCode} message=${probeResult.message}`,
+              )
+            }
+          }
         }
       }
     }

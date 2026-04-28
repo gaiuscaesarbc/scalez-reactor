@@ -113,15 +113,7 @@ body {
 }
 
 .preview-layer-fallback {
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    135deg,
-    rgba(130, 163, 255, 0.22) 0,
-    rgba(130, 163, 255, 0.22) 12px,
-    rgba(130, 163, 255, 0.05) 12px,
-    rgba(130, 163, 255, 0.05) 24px
-  );
+  display: none;
 }
 
 .preview-layer-video {
