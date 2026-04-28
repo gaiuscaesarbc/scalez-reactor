@@ -8,9 +8,9 @@ function toFileUrl(filePath) {
   }
   const normalized = filePath.replace(/\\/g, '/')
   if (/^[a-zA-Z]:\//.test(normalized)) {
-    return `file:///${normalized}`
+    return encodeURI(`file:///${normalized}`)
   }
-  return `file://${normalized}`
+  return encodeURI(`file://${normalized}`)
 }
 
 function LayerPreviewBadge({ layer }) {
@@ -93,7 +93,7 @@ export default function OutputPreview({
         const [layerIndex, slotIndex] = key.split('-').map(Number)
         const slot = layers[layerIndex]?.slots[slotIndex]
         if (slot?.filePath) {
-          const video = new window.HTMLVideoElement()
+          const video = document.createElement('video')
           video.src = toFileUrl(slot.filePath)
           video.preload = 'auto'
           video.muted = true

@@ -73,6 +73,7 @@ function ControlShell() {
   const [audioSmoothing, setAudioSmoothing] = useState(0.8)
   const [safeMode, setSafeMode] = useState(false)
   const [showTestMode, setShowTestMode] = useState(false)
+  const [compactMode, setCompactMode] = useState(false)
   const [savedShows, setSavedShows] = useState([])
   // M9: performance control state
   const [focusedLayer, setFocusedLayer] = useState(null) // null | 0 | 1 | 2
@@ -244,6 +245,10 @@ function ControlShell() {
   })
 
   const displayLayers = useMemo(() => layers.slice().reverse(), [layers])
+  const hasAnyLoadedClip = useMemo(
+    () => layers.some((layer) => layer.slots.some((slot) => slot.status === 'loaded')),
+    [layers],
+  )
 
   const setFxValue = (key, value) => {
     setMasterFx((current) => ({
@@ -266,8 +271,9 @@ function ControlShell() {
   }
 
   const handleScrollClips = (direction) => {
-    // Snap one full slot width (140px + 8px gap) per arrow press
-    const scrollAmount = (140 + 8) * direction
+    // Snap one full slot width per arrow press (matches CSS grid sizes)
+    const step = compactMode ? 131 : 138
+    const scrollAmount = step * direction
     Object.values(scrollContainersRef.current).forEach((container) => {
       if (container) {
         container.scrollBy({ left: scrollAmount, behavior: 'smooth' })
@@ -317,7 +323,7 @@ function ControlShell() {
   }, [layers, effectiveMasterFx, blackout, bassLevel])
 
   return (
-    <main className="control-shell">
+    <main className={`control-shell${compactMode ? ' is-compact' : ''}`}>
       <header className="top-bar panel-glass">
         <div>
           <h1>SCALEZ Vision Engine</h1>
@@ -381,6 +387,14 @@ function ControlShell() {
           </button>
           <button
             type="button"
+            className={`pill${compactMode ? ' is-active' : ''}`}
+            onClick={() => setCompactMode((v) => !v)}
+            title="Compact mode: reduce preview, layer, and FX panel height"
+          >
+            {compactMode ? 'Compact ON' : 'Compact'}
+          </button>
+          <button
+            type="button"
             className={`pill ${showTestMode ? 'is-active' : ''}`}
             onClick={() => setShowTestMode(!showTestMode)}
           >
@@ -405,6 +419,10 @@ function ControlShell() {
         showOverlays
         markSlotFailed={markSlotFailed}
       />
+
+      {!hasAnyLoadedClip && (
+        <p className="empty-guidance panel-glass">Load a clip into any slot to begin.</p>
+      )}
 
       <section className="layer-stack">
         {displayLayers.map((layer) => (

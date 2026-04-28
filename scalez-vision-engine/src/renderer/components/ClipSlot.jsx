@@ -17,6 +17,8 @@ export default function ClipSlot({
   const classes = [
     'clip-slot',
     isActive ? 'is-active' : '',
+    isLoaded ? 'is-loaded' : '',
+    !isLoaded && !hasError ? 'is-empty' : '',
     hasError ? 'is-error' : '',
     isMidiFlash ? 'is-midi-flash' : '',
     isCued ? 'is-cued' : '',

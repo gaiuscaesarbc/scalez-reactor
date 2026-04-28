@@ -53,6 +53,8 @@ function createControlWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webSecurity: !isDev,
+      allowRunningInsecureContent: isDev,
     },
   })
 
@@ -78,6 +80,8 @@ function createOutputWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webSecurity: !isDev,
+      allowRunningInsecureContent: isDev,
     },
   })
 
