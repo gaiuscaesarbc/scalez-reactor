@@ -3,6 +3,7 @@ import LayerStrip from './components/LayerStrip'
 import MasterFxPanel from './components/MasterFxPanel'
 import OutputPreview from './components/OutputPreview'
 import TestModePanel from './components/TestModePanel'
+import ShowManager from './components/ShowManager'
 import { useClipStore } from './hooks/useClipStore'
 import { useFps } from './hooks/useFps'
 import { useSessionTimer } from './hooks/useSessionTimer'
@@ -52,6 +53,11 @@ function ControlShell() {
     triggerClip,
     loadClipIntoSlot,
     markSlotFailed,
+    saveShow,
+    loadShow,
+    getSavedShows,
+    deleteShow,
+    restoreLastShow,
   } = useClipStore()
   const [masterFx, setMasterFx] = useState(DEFAULT_MASTER_FX)
   const [blackout, setBlackout] = useState(false)
@@ -60,8 +66,15 @@ function ControlShell() {
   const [safeMode, setSafeMode] = useState(false)
   const [showTestMode, setShowTestMode] = useState(false)
   const [backupLoopPath, setBackupLoopPath] = useState('')
+  const [savedShows, setSavedShows] = useState([])
   const fps = useFps()
   const sessionTimer = useSessionTimer()
+
+  // Restore last show on mount
+  useEffect(() => {
+    restoreLastShow()
+    setSavedShows(getSavedShows())
+  }, [])
 
   const { bassLevel, isActive: audioActive, permissionDenied, startAudio, stopAudio } = useAudioAnalysis({
     sensitivity: audioSensitivity,
@@ -161,6 +174,20 @@ function ControlShell() {
           </div>
         </div>
         <div className="header-actions">
+          <ShowManager
+            savedShows={savedShows}
+            onSaveShow={(name) => {
+              saveShow(name)
+              setSavedShows(getSavedShows())
+            }}
+            onLoadShow={(name) => {
+              loadShow(name)
+            }}
+            onDeleteShow={(name) => {
+              deleteShow(name)
+              setSavedShows(getSavedShows())
+            }}
+          />
           <button
             type="button"
             className={`pill ${showTestMode ? 'is-active' : ''}`}

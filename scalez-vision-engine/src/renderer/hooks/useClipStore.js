@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadStore, saveStore } from '../utils/storage'
 
 const LAYER_COUNT = 3
@@ -277,9 +277,79 @@ export function useClipStore() {
       })),
     }
     const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
-    shows.push(showData)
+    const existingIdx = shows.findIndex((s) => s.name === showName)
+    if (existingIdx >= 0) {
+      shows[existingIdx] = showData
+    } else {
+      shows.push(showData)
+    }
     localStorage.setItem('scalez_shows', JSON.stringify(shows))
+    localStorage.setItem('scalez_last_show', showName)
     return showData
+  }
+
+  const autosaveShow = () => {
+    const autosaveName = '__autosave__'
+    const showData = {
+      name: autosaveName,
+      timestamp: new Date().toISOString(),
+      layers: layers.map((layer) => ({
+        label: layer.label,
+        visible: layer.visible,
+        opacity: layer.opacity,
+        blendMode: layer.blendMode,
+        slots: layer.slots.map((slot) => ({
+          clipName: slot.clipName,
+          filePath: slot.filePath,
+          status: slot.status,
+        })),
+      })),
+    }
+    localStorage.setItem('scalez_autosave', JSON.stringify(showData))
+  }
+
+  const restoreLastShow = () => {
+    const lastShow = localStorage.getItem('scalez_last_show')
+    if (lastShow && lastShow !== '__autosave__') {
+      return loadShow(lastShow)
+    }
+    const autosave = localStorage.getItem('scalez_autosave')
+    if (autosave) {
+      try {
+        const showData = JSON.parse(autosave)
+        updateLayers((current) =>
+          current.map((layer) => {
+            const showLayer = showData.layers.find((sl) => sl.label === layer.label)
+            if (!showLayer) return layer
+
+            const slots = layer.slots.map((slot, idx) => {
+              const showSlot = showLayer.slots[idx]
+              return showSlot
+                ? {
+                    ...slot,
+                    clipName: showSlot.clipName,
+                    filePath: showSlot.filePath,
+                    status: showSlot.status,
+                    errorMessage: '',
+                  }
+                : slot
+            })
+
+            return {
+              ...layer,
+              visible: showLayer.visible,
+              opacity: showLayer.opacity,
+              blendMode: showLayer.blendMode,
+              slots,
+            }
+          }),
+        )
+        return true
+      } catch (e) {
+        return false
+      }
+    }
+    return false
   }
 
   const loadShow = (showName) => {
@@ -327,6 +397,15 @@ export function useClipStore() {
     localStorage.setItem('scalez_shows', JSON.stringify(filtered))
   }
 
+  // Autosave every 30 seconds
+  useEffect(() => {
+    const autosaveInterval = setInterval(() => {
+      autosaveShow()
+    }, 30000)
+
+    return () => clearInterval(autosaveInterval)
+  }, [layers])
+
   return {
     layers,
     visibleLayers,
@@ -341,5 +420,7 @@ export function useClipStore() {
     loadShow,
     getSavedShows,
     deleteShow,
+    autosaveShow,
+    restoreLastShow,
   }
 }
