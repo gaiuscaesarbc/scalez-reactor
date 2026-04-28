@@ -1,7 +1,21 @@
 const path = require('node:path')
 const fs = require('node:fs')
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { pathToFileURL } = require('node:url')
+const { app, BrowserWindow, ipcMain, protocol, net, session } = require('electron')
 const { dialog } = require('electron')
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'scalez-media',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+])
 
 const isDev = !app.isPackaged
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
@@ -53,8 +67,6 @@ function createControlWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      webSecurity: !isDev,
-      allowRunningInsecureContent: isDev,
     },
   })
 
@@ -80,8 +92,6 @@ function createOutputWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      webSecurity: !isDev,
-      allowRunningInsecureContent: isDev,
     },
   })
 
@@ -127,8 +137,16 @@ function registerIpcHandlers() {
       properties: ['openFile'],
       filters: [
         {
-          name: 'Video Files',
+          name: 'Preferred (MP4 H.264, WebM VP8/VP9)',
+          extensions: ['mp4', 'webm'],
+        },
+        {
+          name: 'Other Containers (Codec Support Varies)',
           extensions: ['mp4', 'webm', 'mov', 'm4v', 'avi', 'mkv'],
+        },
+        {
+          name: 'All Files',
+          extensions: ['*'],
         },
       ],
     })
@@ -138,9 +156,13 @@ function registerIpcHandlers() {
     }
 
     const filePath = result.filePaths[0]
+    const extension = path.extname(filePath).replace('.', '').toLowerCase()
+    const likelyUnsupported = ['mov', 'avi', 'mkv'].includes(extension)
     return {
       filePath,
       clipName: path.basename(filePath),
+      extension,
+      likelyUnsupported,
     }
   })
 
@@ -170,7 +192,86 @@ function registerIpcHandlers() {
   ipcMain.handle('output:state-get', () => sharedOutputState)
 }
 
+function isAllowedOrigin(origin) {
+  if (!origin || typeof origin !== 'string') {
+    return false
+  }
+  if (origin.startsWith('http://localhost:5173') || origin.startsWith('http://127.0.0.1:5173')) {
+    return true
+  }
+  if (origin.startsWith('file://')) {
+    return true
+  }
+  if (isDev && origin.startsWith(devServerUrl)) {
+    return true
+  }
+  return false
+}
+
+function getOriginFromUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return ''
+  }
+  if (rawUrl.startsWith('file://')) {
+    return 'file://'
+  }
+  try {
+    return new URL(rawUrl).origin
+  } catch {
+    return ''
+  }
+}
+
+function isMicPermission(permission) {
+  return permission === 'media' || permission === 'microphone' || permission === 'audioCapture'
+}
+
+function registerPermissionHandlers() {
+  const defaultSession = session.defaultSession
+  if (!defaultSession) {
+    return
+  }
+
+  defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const requestingOrigin = details?.requestingOrigin || getOriginFromUrl(webContents?.getURL?.())
+    const allow = isMicPermission(permission) && isAllowedOrigin(requestingOrigin)
+    if (isDev && isMicPermission(permission)) {
+      console.log(`[perm:req] permission=${permission} origin=${requestingOrigin || 'n/a'} allow=${allow}`)
+    }
+    if (allow) {
+      callback(true)
+      return
+    }
+    callback(false)
+  })
+
+  defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+    const origin = requestingOrigin || getOriginFromUrl(webContents?.getURL?.())
+    const allow = isMicPermission(permission) && isAllowedOrigin(origin)
+    if (isDev && isMicPermission(permission)) {
+      console.log(`[perm:chk] permission=${permission} origin=${origin || 'n/a'} allow=${allow}`)
+    }
+    return allow
+  })
+}
+
+function registerMediaProtocol() {
+  protocol.handle('scalez-media', (request) => {
+    const url = new URL(request.url)
+    const encodedFilePath = url.pathname.startsWith('/') ? url.pathname.slice(1) : url.pathname
+    const filePath = decodeURIComponent(encodedFilePath)
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      return new Response('Not Found', { status: 404 })
+    }
+
+    return net.fetch(pathToFileURL(filePath).toString())
+  })
+}
+
 app.whenReady().then(() => {
+  registerMediaProtocol()
+  registerPermissionHandlers()
   registerIpcHandlers()
   createControlWindow()
   createOutputWindow()

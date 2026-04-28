@@ -2,15 +2,87 @@ import { useEffect, useRef, useState } from 'react'
 import { blendModeToCss } from '../utils/blendModes'
 import AudioMeter from './AudioMeter'
 
+function clamp01(value) {
+  return Math.min(1, Math.max(0, value))
+}
+
+function getReactiveAmount(level, threshold, mode, amount) {
+  const normalizedThreshold = clamp01(threshold)
+  const normalizedAmount = clamp01(amount)
+  const effectiveRange = Math.max(0.0001, 1 - normalizedThreshold)
+
+  if (mode === 'pulse') {
+    return level >= normalizedThreshold ? normalizedAmount : 0
+  }
+
+  const sourceLevel = mode === 'invert' ? 1 - clamp01(level) : clamp01(level)
+  const gatedLevel = Math.max(0, sourceLevel - normalizedThreshold)
+  return (gatedLevel / effectiveRange) * normalizedAmount
+}
+
+function getSpectrumSourceLevel(spectrumLevels, source, fallbackBass) {
+  if (!spectrumLevels) {
+    return fallbackBass
+  }
+  if (source === 'mid') return spectrumLevels.mid ?? fallbackBass
+  if (source === 'high') return spectrumLevels.high ?? fallbackBass
+  if (source === 'full') return spectrumLevels.full ?? fallbackBass
+  return spectrumLevels.low ?? fallbackBass
+}
+
 function toFileUrl(filePath) {
   if (!filePath) {
     return ''
+  }
+  if (window.scalezApi?.toMediaUrl) {
+    return window.scalezApi.toMediaUrl(filePath)
   }
   const normalized = filePath.replace(/\\/g, '/')
   if (/^[a-zA-Z]:\//.test(normalized)) {
     return encodeURI(`file:///${normalized}`)
   }
   return encodeURI(`file://${normalized}`)
+}
+
+function getMediaErrorDetails(mediaError) {
+  if (!mediaError) {
+    return { code: 0, reason: 'Unknown video error' }
+  }
+  const map = {
+    1: 'MEDIA_ERR_ABORTED',
+    2: 'MEDIA_ERR_NETWORK',
+    3: 'MEDIA_ERR_DECODE',
+    4: 'MEDIA_ERR_SRC_NOT_SUPPORTED',
+  }
+  return {
+    code: mediaError.code || 0,
+    reason: map[mediaError.code] || mediaError.message || 'Unknown video error',
+  }
+}
+
+function classifyVideoFailure({ code, reason, playError, filePath }) {
+  if (code === 4 || playError?.name === 'NotSupportedError') {
+    return {
+      type: 'unsupported',
+      message: `Unsupported format/codec. Prefer MP4 (H.264) or WebM (VP8/VP9). (${reason})`,
+    }
+  }
+  if (!filePath) {
+    return {
+      type: 'failed',
+      message: 'Missing file path for this slot.',
+    }
+  }
+  if (code === 2) {
+    return {
+      type: 'failed',
+      message: `File path/network issue while loading media. (${reason})`,
+    }
+  }
+  return {
+    type: 'failed',
+    message: `Playback failed. ${reason}`,
+  }
 }
 
 function LayerPreviewBadge({ layer }) {
@@ -28,13 +100,19 @@ export default function OutputPreview({
   layers,
   fps,
   bassLevel,
+  spectrumLevels,
   masterFx,
   blackout,
   showOverlays,
   markSlotFailed,
+  enablePreload = true,
 }) {
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
+  const srcLogRef = useRef({})
+  const timelineProgressRef = useRef({})
+  const lastTimelineTriggerRef = useRef({})
+  const activeClipKeyRef = useRef({})
   const [syncStatus, setSyncStatus] = useState('synced')
   const [videoErrors, setVideoErrors] = useState({})
 
@@ -42,6 +120,79 @@ export default function OutputPreview({
   useEffect(() => {
     setSyncStatus('synced')
   }, [layers])
+
+  // Apply per-layer timeline range and audio-reactive playback motion.
+  useEffect(() => {
+    layers.forEach((layer) => {
+      const video = videoRefsRef.current[layer.layerIndex]
+      if (!video || Number.isNaN(video.duration) || !Number.isFinite(video.duration) || video.duration <= 0) {
+        return
+      }
+
+      const motion = layer.videoMotion || {}
+      const inPoint = clamp01(motion.inPoint ?? 0)
+      const outPoint = clamp01(motion.outPoint ?? 1)
+      const segmentStart = video.duration * Math.min(inPoint, Math.max(0, outPoint - 0.01))
+      const segmentEnd = video.duration * Math.max(outPoint, inPoint + 0.01)
+      const segmentLength = Math.max(0.05, segmentEnd - segmentStart)
+
+      const activeSlot = typeof layer.activeSlotIndex === 'number' ? layer.activeSlotIndex : -1
+      const activeSlotObj = activeSlot >= 0 ? layer.slots?.[activeSlot] : null
+      const clipKey = activeSlotObj?.filePath || `${layer.layerIndex}-none`
+
+      if (activeClipKeyRef.current[layer.layerIndex] !== clipKey) {
+        activeClipKeyRef.current[layer.layerIndex] = clipKey
+        timelineProgressRef.current[layer.layerIndex] = 0
+        lastTimelineTriggerRef.current[layer.layerIndex] = false
+        video.currentTime = segmentStart
+      }
+
+      if (video.currentTime < segmentStart || video.currentTime > segmentEnd) {
+        video.currentTime = segmentStart
+      }
+
+      const speedLevel = getSpectrumSourceLevel(spectrumLevels, motion.speedSource || 'low', bassLevel)
+      const speedBoost = getReactiveAmount(
+        speedLevel,
+        motion.speedThreshold ?? 0.12,
+        motion.speedMode || 'normal',
+        motion.speedAmount ?? 0,
+      )
+      const playbackRate = Math.max(0.05, Math.min(4, (motion.baseSpeed ?? 1) + speedBoost))
+      video.playbackRate = playbackRate
+
+      const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
+      const timelineDrive = getReactiveAmount(
+        timelineLevel,
+        motion.timelineThreshold ?? 0.2,
+        motion.timelineMode || 'pulse',
+        motion.timelineAmount ?? 0,
+      )
+
+      if (timelineDrive > 0) {
+        const prevProgress = timelineProgressRef.current[layer.layerIndex] ?? 0
+        const mode = motion.timelineMode || 'pulse'
+        let nextProgress = prevProgress
+
+        if (mode === 'pulse') {
+          const wasTriggered = Boolean(lastTimelineTriggerRef.current[layer.layerIndex])
+          const isTriggered = timelineDrive > 0
+          if (isTriggered && !wasTriggered) {
+            nextProgress = (prevProgress + timelineDrive * 0.18) % 1
+          }
+          lastTimelineTriggerRef.current[layer.layerIndex] = isTriggered
+        } else {
+          nextProgress = (prevProgress + timelineDrive * 0.035) % 1
+          lastTimelineTriggerRef.current[layer.layerIndex] = timelineDrive > 0
+        }
+
+        timelineProgressRef.current[layer.layerIndex] = nextProgress
+        video.currentTime = segmentStart + nextProgress * segmentLength
+      } else {
+        lastTimelineTriggerRef.current[layer.layerIndex] = false
+      }
+    })
+  }, [layers, bassLevel, spectrumLevels])
 
   // Cleanup unused video elements (long-session safety)
   useEffect(() => {
@@ -63,6 +214,17 @@ export default function OutputPreview({
 
   // Preload clips near active slots (nearby range)
   useEffect(() => {
+    if (!enablePreload) {
+      Object.values(preloadedRefsRef.current).forEach((video) => {
+        if (video) {
+          video.pause()
+          video.src = ''
+        }
+      })
+      preloadedRefsRef.current = {}
+      return
+    }
+
     const toPreload = new Set()
 
     layers.forEach((layer) => {
@@ -94,22 +256,80 @@ export default function OutputPreview({
         const slot = layers[layerIndex]?.slots[slotIndex]
         if (slot?.filePath) {
           const video = document.createElement('video')
-          video.src = toFileUrl(slot.filePath)
+          const src = toFileUrl(slot.filePath)
+          video.src = src
           video.preload = 'auto'
           video.muted = true
+          if (import.meta.env.DEV && !srcLogRef.current[`preload-${key}-${src}`]) {
+            srcLogRef.current[`preload-${key}-${src}`] = true
+            console.info(`[video:src] preload layer=${layerIndex + 1} slot=${slotIndex + 1} src=${src}`)
+          }
           preloadedRefsRef.current[key] = video
         }
       }
     })
-  }, [layers])
+  }, [layers, enablePreload])
 
   // Handle video errors
-  const handleVideoError = (layerIndex, slotIndex, error) => {
+  const handleVideoError = (layerIndex, slotIndex, filePath, errorEvent) => {
     const key = `${layerIndex}-${slotIndex}`
+    const mediaError = errorEvent?.currentTarget?.error || errorEvent?.target?.error || null
+    const { code, reason } = getMediaErrorDetails(mediaError)
+    const classification = classifyVideoFailure({ code, reason, filePath })
+
+    if (import.meta.env.DEV) {
+      console.error(
+        `[video:error] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason} path=${filePath || 'n/a'}`,
+      )
+    }
+
+    const failedEl = errorEvent?.currentTarget
+    if (failedEl) {
+      failedEl.pause()
+      failedEl.removeAttribute('src')
+      failedEl.load()
+    }
+
+    delete videoRefsRef.current[layerIndex]
+
+    const preloadKey = `${layerIndex}-${slotIndex}`
+    const preloadVideo = preloadedRefsRef.current[preloadKey]
+    if (preloadVideo) {
+      preloadVideo.pause()
+      preloadVideo.src = ''
+      delete preloadedRefsRef.current[preloadKey]
+    }
+
     setVideoErrors((prev) => ({ ...prev, [key]: true }))
-    const errorMsg = error?.target?.error?.message || 'Failed to load video'
     if (markSlotFailed) {
-      markSlotFailed(layerIndex, slotIndex, errorMsg)
+      markSlotFailed(layerIndex, slotIndex, classification.message, classification.type)
+    }
+  }
+
+  const handleVideoCanPlay = (layerIndex, slotIndex, filePath, event) => {
+    if (import.meta.env.DEV) {
+      console.info(`[video:canplay] layer=${layerIndex + 1} slot=${slotIndex + 1} path=${filePath}`)
+    }
+
+    const playPromise = event.currentTarget?.play?.()
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch((playError) => {
+        const classification = classifyVideoFailure({
+          code: 4,
+          reason: playError?.message || 'play() rejected',
+          playError,
+          filePath,
+        })
+        if (import.meta.env.DEV) {
+          console.warn(
+            `[video:play-reject] layer=${layerIndex + 1} slot=${slotIndex + 1} name=${playError?.name || 'Error'} message=${playError?.message || 'n/a'}`,
+          )
+        }
+        setVideoErrors((prev) => ({ ...prev, [`${layerIndex}-${slotIndex}`]: true }))
+        if (markSlotFailed) {
+          markSlotFailed(layerIndex, slotIndex, classification.message, classification.type)
+        }
+      })
     }
   }
 
@@ -120,6 +340,7 @@ export default function OutputPreview({
 
   const glowStrength = masterFx.glow + bassLevel * 0.2
   const strobeOpacity = blackout ? 0 : Math.min(0.8, masterFx.strobe * 0.85)
+  const strobeActive = strobeOpacity > 0.01
 
   return (
     <section className="output-preview-wrap">
@@ -160,6 +381,13 @@ export default function OutputPreview({
           }
 
           const videoKey = `video-${layer.label}-${active.filePath}`
+          const src = toFileUrl(active.filePath)
+          if (import.meta.env.DEV && !srcLogRef.current[videoKey]) {
+            srcLogRef.current[videoKey] = true
+            console.info(
+              `[video:src] active layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} path=${active.filePath} src=${src}`,
+            )
+          }
           return (
             <video
               key={videoKey}
@@ -167,13 +395,18 @@ export default function OutputPreview({
                 if (el) videoRefsRef.current[layer.layerIndex] = el
               }}
               className="preview-layer-video"
-              src={toFileUrl(active.filePath)}
+              src={src}
               autoPlay
               loop
               muted
               playsInline
               preload="auto"
-              onError={(err) => handleVideoError(layer.layerIndex, active.slotIndex, err)}
+              onCanPlay={(event) =>
+                handleVideoCanPlay(layer.layerIndex, active.slotIndex, active.filePath, event)
+              }
+              onError={(event) =>
+                handleVideoError(layer.layerIndex, active.slotIndex, active.filePath, event)
+              }
               style={{
                 opacity: layer.opacity,
                 mixBlendMode: blendModeToCss(layer.blendMode),
@@ -192,7 +425,10 @@ export default function OutputPreview({
         )}
 
         <div className="fx-glow-layer" />
-        <div className="fx-strobe-layer" style={{ opacity: strobeOpacity }} />
+        <div
+          className={`fx-strobe-layer ${strobeActive ? 'is-on' : ''}`}
+          style={{ opacity: strobeOpacity }}
+        />
         <div className={`fx-blackout-layer ${blackout ? 'is-on' : ''}`} />
 
         {showOverlays ? (

@@ -18,6 +18,50 @@ import {
   useOutputStateSubscription,
 } from './hooks/useOutputSync'
 
+function clamp01(value) {
+  return Math.min(1, Math.max(0, value))
+}
+
+function getReactiveAmount(level, threshold, mode, amount) {
+  const normalizedThreshold = clamp01(threshold)
+  const normalizedAmount = clamp01(amount)
+  const effectiveRange = Math.max(0.0001, 1 - normalizedThreshold)
+
+  if (mode === 'pulse') {
+    return level >= normalizedThreshold ? normalizedAmount : 0
+  }
+
+  const sourceLevel = mode === 'invert' ? 1 - clamp01(level) : clamp01(level)
+  const gatedLevel = Math.max(0, sourceLevel - normalizedThreshold)
+  return (gatedLevel / effectiveRange) * normalizedAmount
+}
+
+function getSpectrumSourceLevel(spectrumLevels, source) {
+  if (!spectrumLevels) {
+    return 0
+  }
+  if (source === 'mid') return spectrumLevels.mid ?? 0
+  if (source === 'high') return spectrumLevels.high ?? 0
+  if (source === 'full') return spectrumLevels.full ?? 0
+  return spectrumLevels.low ?? spectrumLevels.full ?? 0
+}
+
+function makeDefaultVideoMotion() {
+  return {
+    inPoint: 0,
+    outPoint: 1,
+    baseSpeed: 1,
+    speedAmount: 0,
+    speedThreshold: 0.12,
+    speedMode: 'normal',
+    speedSource: 'low',
+    timelineAmount: 0,
+    timelineThreshold: 0.2,
+    timelineMode: 'pulse',
+    timelineSource: 'low',
+  }
+}
+
 function getWindowMode() {
   const params = new URLSearchParams(window.location.search)
   const mode = params.get('window')
@@ -31,6 +75,7 @@ function OutputShell() {
   const masterFx = syncedState?.masterFx || DEFAULT_MASTER_FX
   const blackout = Boolean(syncedState?.blackout)
   const bassLevel = syncedState?.audio?.bassLevel ?? 0.2
+  const spectrumLevels = syncedState?.audio?.spectrumLevels || { full: bassLevel, low: bassLevel, mid: 0, high: 0 }
 
   return (
     <main className="output-shell">
@@ -38,9 +83,11 @@ function OutputShell() {
         layers={layers}
         fps={60}
         bassLevel={bassLevel}
+        spectrumLevels={spectrumLevels}
         masterFx={masterFx}
         blackout={blackout}
         showOverlays={false}
+        enablePreload={false}
       />
     </main>
   )
@@ -71,6 +118,23 @@ function ControlShell() {
   const [blackout, setBlackout] = useState(false)
   const [audioSensitivity, setAudioSensitivity] = useState(1)
   const [audioSmoothing, setAudioSmoothing] = useState(0.8)
+  const [audioEq, setAudioEq] = useState({ low: 1, mid: 1, high: 1 })
+  const [audioFxLinks, setAudioFxLinks] = useState({
+    glow: { amount: 0.35, threshold: 0.08, mode: 'normal', source: 'low' },
+    strobe: { amount: 0, threshold: 0.32, mode: 'pulse', source: 'low' },
+    shake: { amount: 0, threshold: 0.14, mode: 'normal', source: 'low' },
+    brightness: { amount: 0.25, threshold: 0.08, mode: 'normal', source: 'low' },
+  })
+  const [layerAudioLinks, setLayerAudioLinks] = useState({
+    0: { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' },
+    1: { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' },
+    2: { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' },
+  })
+  const [layerVideoMotion, setLayerVideoMotion] = useState({
+    0: makeDefaultVideoMotion(),
+    1: makeDefaultVideoMotion(),
+    2: makeDefaultVideoMotion(),
+  })
   const [safeMode, setSafeMode] = useState(false)
   const [showTestMode, setShowTestMode] = useState(false)
   const [compactMode, setCompactMode] = useState(false)
@@ -239,9 +303,18 @@ function ControlShell() {
     return () => clearInterval(autosaveInterval)
   }, [autosaveShow, midiState])
 
-  const { bassLevel, isActive: audioActive, permissionDenied, startAudio, stopAudio } = useAudioAnalysis({
+  const {
+    bassLevel,
+    spectrumLevels,
+    isActive: audioActive,
+    permissionDenied,
+    audioError,
+    startAudio,
+    stopAudio,
+  } = useAudioAnalysis({
     sensitivity: audioSensitivity,
     smoothing: audioSmoothing,
+    eqGains: audioEq,
   })
 
   const displayLayers = useMemo(() => layers.slice().reverse(), [layers])
@@ -290,13 +363,111 @@ function ControlShell() {
     onScrollClips: handleScrollClips,
   })
 
-  const bassBoost = bassLevel * 0.35
+  const setAudioFxLink = useCallback((key, field, value) => {
+    setAudioFxLinks((current) => ({
+      ...current,
+      [key]: {
+        ...current[key],
+        [field]: field === 'mode' || field === 'source' ? value : Number(value),
+      },
+    }))
+  }, [])
+
+  const setAudioEqValue = useCallback((band, value) => {
+    setAudioEq((current) => ({
+      ...current,
+      [band]: Number(value),
+    }))
+  }, [])
+
+  const setLayerAudioLink = useCallback((layerIndex, field, value) => {
+    setLayerAudioLinks((current) => ({
+      ...current,
+      [layerIndex]: {
+        ...(current[layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }),
+        [field]: field === 'mode' || field === 'source' ? value : Number(value),
+      },
+    }))
+  }, [])
+
+  const setLayerVideoMotionValue = useCallback((layerIndex, field, value) => {
+    setLayerVideoMotion((current) => {
+      const prev = current[layerIndex] || makeDefaultVideoMotion()
+      const nextRaw = {
+        ...prev,
+        [field]: field.includes('Mode') || field.includes('Source') ? value : Number(value),
+      }
+
+      // Keep a valid range: outPoint always >= inPoint + 0.01
+      const minGap = 0.01
+      const next = { ...nextRaw }
+      if (next.outPoint < next.inPoint + minGap) {
+        if (field === 'inPoint') {
+          next.outPoint = Math.min(1, next.inPoint + minGap)
+        } else if (field === 'outPoint') {
+          next.inPoint = Math.max(0, next.outPoint - minGap)
+        }
+      }
+
+      return {
+        ...current,
+        [layerIndex]: next,
+      }
+    })
+  }, [])
+
+  const effectiveLayers = useMemo(
+    () => layers.map((layer) => {
+      const link = layerAudioLinks[layer.layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }
+      const sourceLevel = getSpectrumSourceLevel(spectrumLevels, link.source)
+      const reactiveBoost = getReactiveAmount(sourceLevel, link.threshold, link.mode, link.amount)
+      const videoMotion = layerVideoMotion[layer.layerIndex] || makeDefaultVideoMotion()
+      return {
+        ...layer,
+        opacity: Math.min(1, layer.opacity + reactiveBoost),
+        videoMotion,
+      }
+    }),
+    [layers, layerAudioLinks, layerVideoMotion, spectrumLevels],
+  )
+
   const effectiveMasterFx = useMemo(
     () => {
+      const glowSource = getSpectrumSourceLevel(spectrumLevels, audioFxLinks.glow.source)
+      const glowBoost = getReactiveAmount(
+        glowSource,
+        audioFxLinks.glow.threshold,
+        audioFxLinks.glow.mode,
+        audioFxLinks.glow.amount,
+      )
+      const strobeSource = getSpectrumSourceLevel(spectrumLevels, audioFxLinks.strobe.source)
+      const strobeBoost = getReactiveAmount(
+        strobeSource,
+        audioFxLinks.strobe.threshold,
+        audioFxLinks.strobe.mode,
+        audioFxLinks.strobe.amount,
+      )
+      const shakeSource = getSpectrumSourceLevel(spectrumLevels, audioFxLinks.shake.source)
+      const shakeBoost = getReactiveAmount(
+        shakeSource,
+        audioFxLinks.shake.threshold,
+        audioFxLinks.shake.mode,
+        audioFxLinks.shake.amount,
+      )
+      const brightnessSource = getSpectrumSourceLevel(spectrumLevels, audioFxLinks.brightness.source)
+      const brightnessBoost = getReactiveAmount(
+        brightnessSource,
+        audioFxLinks.brightness.threshold,
+        audioFxLinks.brightness.mode,
+        audioFxLinks.brightness.amount,
+      )
+
       const base = {
         ...masterFx,
-        glow: Math.min(1, masterFx.glow + bassBoost),
-        brightness: masterFx.brightness + bassBoost * 0.25,
+        glow: Math.min(1, masterFx.glow + glowBoost),
+        strobe: Math.min(1, masterFx.strobe + strobeBoost),
+        shake: Math.min(1, masterFx.shake + shakeBoost),
+        brightness: Math.min(2, masterFx.brightness + brightnessBoost),
       }
       if (safeMode) {
         return {
@@ -309,18 +480,19 @@ function ControlShell() {
       }
       return base
     },
-    [masterFx, bassBoost, safeMode],
+    [masterFx, spectrumLevels, audioFxLinks, safeMode],
   )
 
   useEffect(() => {
     const nextState = buildOutputState({
-      layers,
+      layers: effectiveLayers,
       masterFx: effectiveMasterFx,
       blackout,
       bassLevel,
+      spectrumLevels,
     })
     window.scalezApi?.publishOutputState?.(nextState)
-  }, [layers, effectiveMasterFx, blackout, bassLevel])
+  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels])
 
   return (
     <main className={`control-shell${compactMode ? ' is-compact' : ''}`}>
@@ -411,9 +583,10 @@ function ControlShell() {
       </header>
 
       <OutputPreview
-        layers={layers}
+        layers={effectiveLayers}
         fps={fps}
         bassLevel={bassLevel}
+        spectrumLevels={spectrumLevels}
         masterFx={effectiveMasterFx}
         blackout={blackout}
         showOverlays
@@ -433,6 +606,8 @@ function ControlShell() {
             cueMode={cueMode}
             cuedSlotIndex={cuedSlots[layer.layerIndex] ?? null}
             midiFlashSlots={midiFlashSlots}
+            audioLink={layerAudioLinks[layer.layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }}
+            videoMotion={layerVideoMotion[layer.layerIndex] || makeDefaultVideoMotion()}
             onToggleVisible={setLayerVisible}
             onOpacityChange={setLayerOpacity}
             onBlendModeChange={setLayerBlendMode}
@@ -442,6 +617,8 @@ function ControlShell() {
             onFocusToggle={handleFocusToggle}
             onLaunchCue={handleLaunchCue}
             onScrollRef={handleScrollRef}
+            onAudioLinkChange={setLayerAudioLink}
+            onVideoMotionChange={setLayerVideoMotionValue}
           />
         ))}
       </section>
@@ -456,10 +633,16 @@ function ControlShell() {
         onSafeModeChange={setSafeMode}
         audioPanel={{
           bassLevel,
+          spectrumLevels,
           isActive: audioActive,
           permissionDenied,
+          audioError,
+          eq: audioEq,
+          fxLinks: audioFxLinks,
           sensitivity: audioSensitivity,
           smoothing: audioSmoothing,
+          onEqChange: setAudioEqValue,
+          onFxLinkChange: setAudioFxLink,
           onStartAudio: startAudio,
           onStopAudio: stopAudio,
           onSensitivityChange: setAudioSensitivity,

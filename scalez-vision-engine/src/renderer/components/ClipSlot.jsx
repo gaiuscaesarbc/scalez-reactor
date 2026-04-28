@@ -11,8 +11,18 @@ export default function ClipSlot({
   const label = slot.clipName || 'Empty slot'
   const isMissing = slot.status === 'missing'
   const isFailed = slot.status === 'failed'
+  const isUnsupported = slot.status === 'unsupported'
   const isLoaded = slot.status === 'loaded'
-  const hasError = isMissing || isFailed
+  const hasError = isMissing || isFailed || isUnsupported
+  const hasCompatibilityWarning = isLoaded && Boolean(slot.errorMessage)
+
+  const slotTitle = isUnsupported
+    ? `Unsupported format: ${slot.errorMessage}`
+    : isFailed
+      ? `Error: ${slot.errorMessage}`
+      : hasCompatibilityWarning
+        ? slot.errorMessage
+        : undefined
 
   const classes = [
     'clip-slot',
@@ -32,7 +42,7 @@ export default function ClipSlot({
         type="button"
         className="clip-slot__trigger"
         onClick={() => onTrigger(layerIndex, slot.slotIndex)}
-        title={isFailed ? `Error: ${slot.errorMessage}` : undefined}
+        title={slotTitle}
       >
         <div className="clip-slot__num">
           {slot.slotIndex + 1}
@@ -40,10 +50,24 @@ export default function ClipSlot({
           {isCued && !isMidiFlash && <span className="clip-slot__cue-badge">CUE</span>}
         </div>
         <div className="clip-slot__thumb">
-          {isFailed ? '⚠️ ERROR' : isMissing ? 'MISSING' : isLoaded ? 'VIDEO' : 'EMPTY'}
+          {isUnsupported
+            ? 'UNSUPPORTED'
+            : isFailed
+              ? 'ERROR'
+              : isMissing
+                ? 'MISSING'
+                : isLoaded
+                  ? 'VIDEO'
+                  : 'EMPTY'}
         </div>
         <div className="clip-slot__name" title={label}>
-          {isFailed ? `Error: ${slot.errorMessage.slice(0, 20)}...` : isMissing ? 'Missing file' : label}
+          {isUnsupported
+            ? 'Unsupported format'
+            : isFailed
+              ? `Error: ${slot.errorMessage.slice(0, 28)}...`
+              : isMissing
+                ? 'Missing file'
+                : label}
         </div>
       </button>
 
