@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import LayerStrip from './components/LayerStrip'
 import MasterFxPanel from './components/MasterFxPanel'
 import OutputPreview from './components/OutputPreview'
@@ -11,6 +11,7 @@ import { useSessionTimer } from './hooks/useSessionTimer'
 import { useAudioAnalysis } from './hooks/useAudioAnalysis'
 import { useHotkeys } from './hooks/useHotkeys'
 import { useMidiController } from './hooks/useMidiController'
+import { useTapTempo } from './hooks/useTapTempo'
 import {
   buildOutputState,
   DEFAULT_MASTER_FX,
@@ -65,16 +66,72 @@ function ControlShell() {
     autosaveShow,
   } = useClipStore()
   const midiState = useMidiController()
+  const { bpm, tap: tapTempo, reset: resetTempo } = useTapTempo()
   const [masterFx, setMasterFx] = useState(DEFAULT_MASTER_FX)
   const [blackout, setBlackout] = useState(false)
   const [audioSensitivity, setAudioSensitivity] = useState(1)
   const [audioSmoothing, setAudioSmoothing] = useState(0.8)
   const [safeMode, setSafeMode] = useState(false)
   const [showTestMode, setShowTestMode] = useState(false)
-  const [backupLoopPath, setBackupLoopPath] = useState('')
   const [savedShows, setSavedShows] = useState([])
+  // M9: performance control state
+  const [focusedLayer, setFocusedLayer] = useState(null) // null | 0 | 1 | 2
+  const [cueMode, setCueMode] = useState(false)
+  const [cuedSlots, setCuedSlots] = useState({}) // { layerIndex: slotIndex }
+  const [midiFlashSlots, setMidiFlashSlots] = useState(new Set())
   const fps = useFps()
   const sessionTimer = useSessionTimer()
+  // Scroll ref map: layerIndex → DOM element
+  const scrollContainersRef = useRef({})
+
+  // Flash a slot briefly when triggered via MIDI
+  const flashMidiSlot = useCallback((layerIndex, slotIndex) => {
+    const key = `${layerIndex}-${slotIndex}`
+    setMidiFlashSlots((prev) => {
+      const next = new Set(prev)
+      next.add(key)
+      return next
+    })
+    setTimeout(() => {
+      setMidiFlashSlots((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }, 400)
+  }, [])
+
+  // Cue mode: either cue the slot or trigger it depending on mode
+  const handleTriggerOrCue = useCallback((layerIndex, slotIndex) => {
+    if (cueMode) {
+      setCuedSlots((prev) => ({ ...prev, [layerIndex]: slotIndex }))
+    } else {
+      triggerClip(layerIndex, slotIndex)
+    }
+  }, [cueMode, triggerClip])
+
+  // Launch a cued clip (exits cue mode for that layer)
+  const handleLaunchCue = useCallback((layerIndex) => {
+    const slotIndex = cuedSlots[layerIndex]
+    if (typeof slotIndex === 'number') {
+      triggerClip(layerIndex, slotIndex)
+      setCuedSlots((prev) => {
+        const next = { ...prev }
+        delete next[layerIndex]
+        return next
+      })
+    }
+  }, [cuedSlots, triggerClip])
+
+  // Focus toggle: only one layer can be focused at a time
+  const handleFocusToggle = useCallback((layerIndex) => {
+    setFocusedLayer((prev) => (prev === layerIndex ? null : layerIndex))
+  }, [])
+
+  // Scroll ref registration callback passed to LayerStrip
+  const handleScrollRef = useCallback((layerIndex, el) => {
+    scrollContainersRef.current[layerIndex] = el
+  }, [])
 
   // Restore last show on mount
   useEffect(() => {
@@ -107,17 +164,24 @@ function ControlShell() {
           setSafeMode((current) => !current)
           break
 
-        case 'layer-1-slots':
-          handleTriggerByKeyNumber(0, midiValue % 10)
+        case 'tap-tempo':
+          tapTempo()
           break
 
-        case 'layer-2-slots':
-          handleTriggerByKeyNumber(1, midiValue % 10)
+        case 'launch-cue':
+          if (focusedLayer !== null) {
+            handleLaunchCue(focusedLayer)
+          }
           break
 
-        case 'layer-3-slots':
-          handleTriggerByKeyNumber(2, midiValue % 10)
+        case 'clip-slot': {
+          const { layerIndex, slotIndex } = mapping
+          if (typeof layerIndex === 'number' && typeof slotIndex === 'number') {
+            flashMidiSlot(layerIndex, slotIndex)
+            triggerClip(layerIndex, slotIndex)
+          }
           break
+        }
 
         case 'glow':
           setMasterFx((current) => ({ ...current, glow: Math.min(1, midiValue / 127) }))
@@ -150,6 +214,12 @@ function ControlShell() {
           setLayerOpacity(2, midiValue / 127)
           break
 
+        case 'focused-layer-opacity':
+          if (focusedLayer !== null) {
+            setLayerOpacity(focusedLayer, midiValue / 127)
+          }
+          break
+
         default:
           break
       }
@@ -157,7 +227,7 @@ function ControlShell() {
 
     window.addEventListener('midi-command', handleMidiCommand)
     return () => window.removeEventListener('midi-command', handleMidiCommand)
-  }, [setLayerOpacity])
+  }, [setLayerOpacity, focusedLayer, tapTempo, flashMidiSlot, handleLaunchCue, triggerClip])
 
   // Autosave MIDI mappings with show data
   useEffect(() => {
@@ -174,7 +244,6 @@ function ControlShell() {
   })
 
   const displayLayers = useMemo(() => layers.slice().reverse(), [layers])
-  const scrollContainersRef = useRef({})
 
   const setFxValue = (key, value) => {
     setMasterFx((current) => ({
@@ -191,26 +260,19 @@ function ControlShell() {
     if (slotNum >= 0 && slotNum < 9) {
       const layer = layers[layerIndex]
       if (layer && layer.slots[slotNum]) {
-        triggerClip(layerIndex, slotNum)
+        handleTriggerOrCue(layerIndex, slotNum)
       }
     }
   }
 
   const handleScrollClips = (direction) => {
-    const scrollAmount = 140 + 8
+    // Snap one full slot width (140px + 8px gap) per arrow press
+    const scrollAmount = (140 + 8) * direction
     Object.values(scrollContainersRef.current).forEach((container) => {
       if (container) {
-        container.scrollBy({
-          left: scrollAmount * direction,
-          behavior: 'smooth',
-        })
+        container.scrollBy({ left: scrollAmount, behavior: 'smooth' })
       }
     })
-  }
-
-  const handleTestBassSimulate = () => {
-    // This is a visual test - the audio analysis shows the effect
-    // In real use, the audio would trigger this, but we simulate it for testing
   }
 
   useHotkeys({
@@ -284,6 +346,39 @@ function ControlShell() {
               setSavedShows(getSavedShows())
             }}
           />
+          {/* Tap Tempo */}
+          <div className="tap-tempo">
+            <button
+              type="button"
+              className="tap-tempo__btn"
+              onClick={tapTempo}
+              title="Tap to set tempo (no sync)"
+            >
+              TAP
+            </button>
+            <span className="tap-tempo__bpm">
+              {bpm !== null ? `${bpm} BPM` : '— BPM'}
+            </span>
+            {bpm !== null && (
+              <button
+                type="button"
+                className="tap-tempo__reset"
+                onClick={resetTempo}
+                title="Reset tap tempo"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          {/* Cue Mode */}
+          <button
+            type="button"
+            className={`pill${cueMode ? ' is-active' : ''}`}
+            onClick={() => setCueMode((c) => !c)}
+            title="Cue mode: select clip to stage, then press Launch to play"
+          >
+            {cueMode ? '⏸ Cue ON' : '⏸ Cue'}
+          </button>
           <button
             type="button"
             className={`pill ${showTestMode ? 'is-active' : ''}`}
@@ -316,12 +411,19 @@ function ControlShell() {
           <LayerStrip
             key={layer.label}
             layer={layer}
+            isFocused={focusedLayer === layer.layerIndex}
+            cueMode={cueMode}
+            cuedSlotIndex={cuedSlots[layer.layerIndex] ?? null}
+            midiFlashSlots={midiFlashSlots}
             onToggleVisible={setLayerVisible}
             onOpacityChange={setLayerOpacity}
             onBlendModeChange={setLayerBlendMode}
             onClear={clearLayer}
-            onTrigger={triggerClip}
+            onTrigger={handleTriggerOrCue}
             onLoad={loadClipIntoSlot}
+            onFocusToggle={handleFocusToggle}
+            onLaunchCue={handleLaunchCue}
+            onScrollRef={handleScrollRef}
           />
         ))}
       </section>
@@ -351,7 +453,7 @@ function ControlShell() {
         <TestModePanel
           layers={layers}
           onTriggerClip={triggerClip}
-          onBassSimulate={handleTestBassSimulate}
+          onBassSimulate={() => {}}
           onToggleLayerVisibility={setLayerVisible}
         />
       )}

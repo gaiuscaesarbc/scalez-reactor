@@ -299,6 +299,8 @@ body {
   border: 1px solid var(--border);
   background: rgba(7, 12, 29, 0.86);
   padding: 8px;
+  scroll-snap-type: x mandatory;
+  scroll-padding-left: 8px;
 }
 
 .clip-grid {
@@ -325,6 +327,7 @@ body {
 .clip-slot {
   display: grid;
   gap: 6px;
+  scroll-snap-align: start;
 }
 
 .clip-slot__num {
@@ -382,6 +385,274 @@ body {
 .clip-slot.is-error .clip-slot__thumb {
   color: #ffb347;
   background: linear-gradient(145deg, rgba(255, 159, 64, 0.3), rgba(255, 100, 50, 0.2));
+}
+
+/* MIDI flash animation — slot lights up when triggered via MIDI */
+@keyframes midi-flash {
+  0% {
+    border-color: #fff;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.8), 0 0 24px rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.25);
+  }
+  60% {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 2px rgba(74, 180, 255, 0.6), 0 0 18px rgba(74, 180, 255, 0.5);
+  }
+  100% {
+    border-color: #2b3f76;
+    box-shadow: none;
+    background: linear-gradient(180deg, rgba(36, 56, 107, 0.35), rgba(13, 20, 43, 0.74));
+  }
+}
+
+.clip-slot.is-midi-flash .clip-slot__trigger {
+  animation: midi-flash 0.4s ease-out forwards;
+  position: relative;
+}
+
+.clip-slot__midi-badge {
+  display: inline-block;
+  background: var(--blue);
+  color: #000;
+  font-size: 0.6rem;
+  font-weight: 900;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+  letter-spacing: 0.05em;
+  animation: midi-flash 0.4s ease-out forwards;
+}
+
+/* Cue mode — slot is staged but not yet playing */
+.clip-slot.is-cued .clip-slot__trigger {
+  border-color: #ffcc00;
+  box-shadow: 0 0 18px rgba(255, 204, 0, 0.5);
+  background: linear-gradient(180deg, rgba(60, 50, 0, 0.5), rgba(20, 16, 0, 0.7));
+}
+
+.clip-slot__cue-badge {
+  display: inline-block;
+  background: #ffcc00;
+  color: #111;
+  font-size: 0.6rem;
+  font-weight: 900;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+  letter-spacing: 0.05em;
+}
+
+/* ── Layer Focus Mode ── */
+.layer-strip--focused {
+  outline: 2px solid rgba(74, 180, 255, 0.6);
+  outline-offset: 2px;
+  border-radius: 14px;
+}
+
+.layer-controls__title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.layer-controls__focus-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 2px 6px;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.layer-controls__focus-btn:hover {
+  color: var(--blue);
+  border-color: rgba(74, 180, 255, 0.4);
+}
+
+.layer-controls__focus-btn.is-focused {
+  color: var(--blue);
+  border-color: rgba(74, 180, 255, 0.6);
+  box-shadow: 0 0 10px rgba(74, 180, 255, 0.3);
+}
+
+/* ── Cue Section in Layer Controls ── */
+.cue-section {
+  margin-top: 6px;
+  padding: 8px;
+  background: rgba(255, 204, 0, 0.08);
+  border: 1px solid rgba(255, 204, 0, 0.25);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cue-section__label {
+  font-size: 0.78rem;
+  color: #ffcc00;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cue-launch-btn {
+  padding: 8px;
+  background: rgba(255, 204, 0, 0.1);
+  border: 1px solid rgba(255, 204, 0, 0.4);
+  border-radius: 7px;
+  color: #ffcc00;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cue-launch-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.cue-launch-btn.is-ready {
+  background: rgba(255, 204, 0, 0.22);
+  box-shadow: 0 0 14px rgba(255, 204, 0, 0.35);
+  animation: cue-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cue-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 204, 0, 0.25); }
+  50% { box-shadow: 0 0 20px rgba(255, 204, 0, 0.6); }
+}
+
+.cue-launch-btn:hover:not(:disabled) {
+  background: rgba(255, 204, 0, 0.35);
+  transform: translateY(-1px);
+}
+
+/* ── Tap Tempo ── */
+.tap-tempo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 4px 8px;
+}
+
+.tap-tempo__btn {
+  background: linear-gradient(135deg, var(--purple), #6e4ee8);
+  border: 1px solid rgba(141, 109, 255, 0.5);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 800;
+  font-size: 0.82rem;
+  padding: 6px 12px;
+  letter-spacing: 0.08em;
+  transition: all 0.1s;
+  user-select: none;
+}
+
+.tap-tempo__btn:active {
+  transform: scale(0.94);
+  box-shadow: 0 0 14px rgba(141, 109, 255, 0.6);
+}
+
+.tap-tempo__btn:hover {
+  box-shadow: 0 0 10px rgba(141, 109, 255, 0.45);
+}
+
+.tap-tempo__bpm {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--blue);
+  min-width: 60px;
+  text-align: center;
+  font-family: 'Courier New', monospace;
+}
+
+.tap-tempo__reset {
+  background: none;
+  border: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.2s;
+}
+
+.tap-tempo__reset:hover {
+  color: var(--red);
+}
+
+/* ── MIDI Panel additions for slot picker ── */
+.midi-learn-banner {
+  padding: 8px 12px;
+  background: rgba(255, 180, 71, 0.15);
+  border: 1px solid rgba(255, 180, 71, 0.5);
+  border-radius: 7px;
+  font-size: 0.85rem;
+  color: #ffb347;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.midi-slot-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px;
+  background: rgba(8, 14, 34, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.midi-slot-picker__label {
+  font-size: 0.8rem;
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+.midi-select--sm {
+  padding: 5px 8px;
+  font-size: 0.82rem;
+  min-width: 60px;
+}
+
+.midi-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.midi-slot-list__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: rgba(141, 109, 255, 0.1);
+  border: 1px solid rgba(141, 109, 255, 0.2);
+  border-radius: 5px;
+}
+
+.midi-slot-list__label {
+  flex: 1;
+  font-size: 0.82rem;
+  color: var(--text-soft);
 }
 
 .bottom-panel {

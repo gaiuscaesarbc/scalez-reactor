@@ -8,10 +8,17 @@ export function useMidiController() {
   const [isLearning, setIsLearning] = useState(false)
   const [learnMode, setLearnMode] = useState(null) // 'button', 'knob', etc
   const [learnConfig, setLearnConfig] = useState(null)
-  const [mappings, setMappings] = useState({}) // { midiKey: { type, layer, slot, ... } }
+  const [mappings, setMappings] = useState({}) // { midiKey: { type, action, layerIndex?, slotIndex?, ... } }
   const midiAccessRef = useRef(null)
   const inputsRef = useRef({})
   const learnResolverRef = useRef(null)
+  // Refs hold current values so the onmidimessage closure never goes stale
+  const isLearningRef = useRef(false)
+  const mappingsRef = useRef({})
+
+  // Keep refs in sync with state so MIDI handlers never close over stale values
+  useEffect(() => { isLearningRef.current = isLearning }, [isLearning])
+  useEffect(() => { mappingsRef.current = mappings }, [mappings])
 
   // Check Web MIDI support
   useEffect(() => {
@@ -77,58 +84,51 @@ export function useMidiController() {
     }
   }, [updateInputList])
 
-  // Set selected input and attach listener
+  // Set selected input and attach listener — uses refs to avoid stale closures
   const selectInput = useCallback((deviceId) => {
     const input = inputsRef.current[deviceId]
     if (!input) return
 
     setSelectedInput(deviceId)
 
-    // Attach MIDI message listener
+    // Attach MIDI message listener — reads from refs, never stale
     input.onmidimessage = (event) => {
       const [status, note, velocity] = event.data
       const isNoteOn = (status & 0xf0) === 0x90
       const isNoteOff = (status & 0xf0) === 0x80
       const isCC = (status & 0xf0) === 0xb0
 
-      // Trigger learn callback if in learn mode
-      if (isLearning && learnResolverRef.current) {
-        let midiKey
-        let midiValue = null
+      let midiKey
+      let midiValue = null
 
-        if (isNoteOn || isNoteOff) {
-          midiKey = `note_${note}`
-          midiValue = isNoteOn ? velocity : 0
-        } else if (isCC) {
-          midiKey = `cc_${note}`
-          midiValue = velocity
-        }
-
-        if (midiKey) {
-          learnResolverRef.current({ midiKey, midiValue })
-          learnResolverRef.current = null
-        }
+      if (isNoteOn || isNoteOff) {
+        midiKey = `note_${note}`
+        midiValue = isNoteOn ? velocity : 0
+      } else if (isCC) {
+        midiKey = `cc_${note}`
+        midiValue = velocity
       }
 
-      // Execute mapped command if not learning
-      if (!isLearning) {
-        let midiKey
-        let midiValue = null
+      if (!midiKey) return
 
-        if (isNoteOn || isNoteOff) {
-          midiKey = `note_${note}`
-          midiValue = isNoteOn ? velocity : 0
-        } else if (isCC) {
-          midiKey = `cc_${note}`
-          midiValue = velocity
-        }
+      // If in learn mode, capture first event and resolve the promise
+      if (isLearningRef.current && learnResolverRef.current) {
+        learnResolverRef.current({ midiKey, midiValue })
+        learnResolverRef.current = null
+        return
+      }
 
-        if (midiKey && mappings[midiKey]) {
-          executeMapping(midiKey, midiValue)
-        }
+      // Execute mapped command using latest mappings from ref
+      const currentMappings = mappingsRef.current
+      if (currentMappings[midiKey]) {
+        const mapping = currentMappings[midiKey]
+        const event2 = new CustomEvent('midi-command', {
+          detail: { mapping, midiKey, midiValue },
+        })
+        window.dispatchEvent(event2)
       }
     }
-  }, [isLearning, mappings])
+  }, []) // no deps — uses refs internally
 
   // Start learn mode - wait for next MIDI event
   const startLearn = useCallback((type, config) => {
@@ -183,22 +183,6 @@ export function useMidiController() {
     return mappings
   }, [mappings])
 
-  // Execute a mapped command (to be connected to clip trigger, etc.)
-  const executeMapping = useCallback((midiKey, midiValue) => {
-    const mapping = mappings[midiKey]
-    if (!mapping) return
-
-    // Dispatch custom event that will be caught by listeners
-    const event = new CustomEvent('midi-command', {
-      detail: {
-        mapping,
-        midiKey,
-        midiValue,
-      },
-    })
-    window.dispatchEvent(event)
-  }, [mappings])
-
   // Get list of all mappings in readable format
   const getMappingsList = useCallback(() => {
     return Object.entries(mappings).map(([midiKey, mapping]) => ({
@@ -225,7 +209,6 @@ export function useMidiController() {
     clearAllMappings,
     loadMappings,
     getMappings,
-    executeMapping,
     getMappingsList,
   }
 }

@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 
-export default function MidiPanel({ midiState, onMapCommand, layers = 3 }) {
+const LAYER_COUNT = 3
+const SLOT_COUNT = 50
+
+export default function MidiPanel({ midiState, onMapCommand }) {
   const {
     midiAvailable,
     hasPermission,
@@ -20,43 +23,41 @@ export default function MidiPanel({ midiState, onMapCommand, layers = 3 }) {
 
   const [showPanel, setShowPanel] = useState(false)
   const [learningLabel, setLearningLabel] = useState('')
+  // For direct slot mapping
+  const [slotLearnLayer, setSlotLearnLayer] = useState(0)
+  const [slotLearnSlot, setSlotLearnSlot] = useState(0)
 
+  // General (non-slot) actions
   const learnActions = [
     { id: 'blackout', label: 'Blackout Toggle', type: 'button' },
     { id: 'reset', label: 'Reset FX', type: 'button' },
     { id: 'safe-mode', label: 'Safe Mode Toggle', type: 'button' },
-    { id: 'layer-1-slots', label: 'Layer 1 Slot (0-9)', type: 'button' },
-    { id: 'layer-2-slots', label: 'Layer 2 Slot (0-9)', type: 'button' },
-    { id: 'layer-3-slots', label: 'Layer 3 Slot (0-9)', type: 'button' },
-    { id: 'glow', label: 'Glow (Knob/Slider)', type: 'knob' },
-    { id: 'strobe', label: 'Strobe (Knob/Slider)', type: 'knob' },
-    { id: 'shake', label: 'Shake (Knob/Slider)', type: 'knob' },
-    { id: 'brightness', label: 'Brightness (Knob/Slider)', type: 'knob' },
+    { id: 'launch-cue', label: 'Launch Cue (focused layer)', type: 'button' },
+    { id: 'tap-tempo', label: 'Tap Tempo', type: 'button' },
+    { id: 'glow', label: 'Glow', type: 'knob' },
+    { id: 'strobe', label: 'Strobe', type: 'knob' },
+    { id: 'shake', label: 'Shake', type: 'knob' },
+    { id: 'brightness', label: 'Brightness', type: 'knob' },
     { id: 'layer-1-opacity', label: 'Layer 1 Opacity', type: 'knob' },
     { id: 'layer-2-opacity', label: 'Layer 2 Opacity', type: 'knob' },
     { id: 'layer-3-opacity', label: 'Layer 3 Opacity', type: 'knob' },
+    { id: 'focused-layer-opacity', label: 'Focused Layer Opacity', type: 'knob' },
   ]
 
   const handleLearnClick = async (action) => {
     setLearningLabel(action.label)
-    stopLearn() // Reset any previous learn state
+    stopLearn()
 
     try {
-      const result = await midiState.startLearn(action.type, action.id)
-
+      const result = await startLearn(action.type, action.id)
       if (result && result.midiKey) {
         setMapping(result.midiKey, {
           type: action.type,
           action: action.id,
           label: action.label,
         })
-
-        // Call parent callback
-        if (onMapCommand) {
-          onMapCommand(action.id, result.midiKey)
-        }
+        if (onMapCommand) onMapCommand(action.id, result.midiKey)
       }
-
       stopLearn()
       setLearningLabel('')
     } catch (err) {
@@ -66,33 +67,49 @@ export default function MidiPanel({ midiState, onMapCommand, layers = 3 }) {
     }
   }
 
+  const handleSlotLearnClick = async () => {
+    const actionId = `clip-slot`
+    const label = `L${slotLearnLayer + 1} Slot ${slotLearnSlot + 1}`
+    setLearningLabel(label)
+    stopLearn()
+
+    try {
+      const result = await startLearn('button', actionId)
+      if (result && result.midiKey) {
+        setMapping(result.midiKey, {
+          type: 'button',
+          action: 'clip-slot',
+          label,
+          layerIndex: slotLearnLayer,
+          slotIndex: slotLearnSlot,
+        })
+      }
+      stopLearn()
+      setLearningLabel('')
+    } catch (err) {
+      console.error('Slot learn failed:', err)
+      stopLearn()
+      setLearningLabel('')
+    }
+  }
+
   const getMappingDisplayText = (midiKey) => {
     const parts = midiKey.split('_')
-    if (parts[0] === 'note') {
-      return `Note ${parts[1]}`
-    } else if (parts[0] === 'cc') {
-      return `CC ${parts[1]}`
-    }
+    if (parts[0] === 'note') return `Note ${parts[1]}`
+    if (parts[0] === 'cc') return `CC ${parts[1]}`
     return midiKey
   }
 
-  const getMappingActions = () => {
-    const grouped = {}
-    Object.entries(mappings).forEach(([midiKey, mapping]) => {
-      const action = mapping.action || 'unknown'
-      if (!grouped[action]) {
-        grouped[action] = []
-      }
-      grouped[action].push({ midiKey, mapping })
-    })
-    return grouped
-  }
+  // Slot mappings (action === 'clip-slot')
+  const slotMappings = Object.entries(mappings).filter(([, m]) => m.action === 'clip-slot')
+  // General mappings (everything else)
+  const generalMappings = Object.entries(mappings).filter(([, m]) => m.action !== 'clip-slot')
 
   if (!midiAvailable) {
     return (
       <div className="midi-panel">
         <button className="midi-btn midi-btn--unavailable" disabled>
-          🎛️ MIDI Not Supported
+          🎛️ MIDI N/A
         </button>
       </div>
     )
@@ -111,28 +128,20 @@ export default function MidiPanel({ midiState, onMapCommand, layers = 3 }) {
             : 'MIDI: Permission required'
         }
       >
-        🎛️ MIDI
+        🎛️ MIDI{selectedInput ? ' ●' : ''}
       </button>
 
       {showPanel && (
         <div className="midi-panel__content">
           <div className="midi-panel__header">
             <h3>MIDI Controller</h3>
-            <button
-              className="midi-panel__close"
-              onClick={() => setShowPanel(false)}
-            >
-              ✕
-            </button>
+            <button className="midi-panel__close" onClick={() => setShowPanel(false)}>✕</button>
           </div>
 
-          {/* Permission Section */}
+          {/* Permission */}
           {!hasPermission && (
             <div className="midi-section">
-              <button
-                className="midi-btn midi-btn--primary"
-                onClick={requestPermission}
-              >
+              <button className="midi-btn midi-btn--primary" onClick={requestPermission}>
                 🔓 Request MIDI Access
               </button>
               <p className="midi-note">Grant permission to use MIDI devices</p>
@@ -143,7 +152,7 @@ export default function MidiPanel({ midiState, onMapCommand, layers = 3 }) {
             <>
               {/* Device Selection */}
               <div className="midi-section">
-                <label className="midi-label">Connected Devices:</label>
+                <label className="midi-label">Device</label>
                 {midiInputs.length === 0 ? (
                   <p className="midi-note">No MIDI devices connected</p>
                 ) : (
@@ -152,117 +161,150 @@ export default function MidiPanel({ midiState, onMapCommand, layers = 3 }) {
                     value={selectedInput || ''}
                     onChange={(e) => selectInput(e.target.value)}
                   >
-                    <option value="">Select a MIDI input...</option>
+                    <option value="">Select input...</option>
                     {midiInputs.map((input) => (
                       <option key={input.id} value={input.id}>
-                        {input.name}
-                        {input.manufacturer ? ` (${input.manufacturer})` : ''}
+                        {input.name}{input.manufacturer ? ` (${input.manufacturer})` : ''}
                       </option>
                     ))}
                   </select>
                 )}
                 {selectedInput && (
-                  <p className="midi-status midi-status--active">
-                    ✓ Device selected and listening
-                  </p>
+                  <p className="midi-status midi-status--active">✓ Listening</p>
                 )}
               </div>
 
-              {/* Learn Mode Section */}
               {selectedInput && (
-                <div className="midi-section">
-                  <label className="midi-label">Map Controls:</label>
-                  <p className="midi-note">
-                    {isLearning
-                      ? `Listening... Press button/knob for: ${learningLabel}`
-                      : 'Click "Learn" next to an action, then press a MIDI button or move a knob'}
-                  </p>
-
-                  <div className="midi-learn-grid">
-                    {learnActions.map((action) => {
-                      const isMapped = Object.values(mappings).some(
-                        (m) => m.action === action.id
-                      )
-                      const mappedKey = Object.entries(mappings)
-                        .find(([, m]) => m.action === action.id)?.[0]
-
-                      return (
-                        <div key={action.id} className="midi-learn-item">
-                          <div className="midi-learn-label">{action.label}</div>
-                          <button
-                            className={`midi-btn midi-btn--small ${
-                              isLearning && learnMode === action.type
-                                ? 'midi-btn--learning'
-                                : ''
-                            } ${isMapped ? 'midi-btn--mapped' : ''}`}
-                            onClick={() => handleLearnClick(action)}
-                            disabled={isLearning && learnMode !== action.type}
-                            title={
-                              isMapped
-                                ? `Mapped to ${getMappingDisplayText(mappedKey)}`
-                                : 'Click to learn'
-                            }
-                          >
-                            {isMapped ? getMappingDisplayText(mappedKey) : 'Learn'}
-                          </button>
-                          {isMapped && (
-                            <button
-                              className="midi-btn midi-btn--mini midi-btn--delete"
-                              onClick={() => clearMapping(mappedKey)}
-                              title="Clear this mapping"
-                            >
-                              🗑️
-                            </button>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {/* Mappings Summary */}
-                  {Object.keys(mappings).length > 0 && (
-                    <div className="midi-mappings">
-                      <label className="midi-label">Active Mappings:</label>
-                      {Object.entries(getMappingActions()).map(
-                        ([action, items]) => (
-                          <div key={action} className="midi-mapping-group">
-                            <div className="midi-mapping-action">
-                              {items[0].mapping.label}
-                            </div>
-                            <div className="midi-mapping-keys">
-                              {items.map(({ midiKey }) => (
-                                <span
-                                  key={midiKey}
-                                  className="midi-key-badge"
-                                >
-                                  {getMappingDisplayText(midiKey)}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )
-                      )}
-
-                      <button
-                        className="midi-btn midi-btn--danger"
-                        onClick={clearAllMappings}
-                      >
-                        🗑️ Clear All Mappings
+                <>
+                  {/* Learn status banner */}
+                  {isLearning && (
+                    <div className="midi-learn-banner">
+                      🎵 Waiting... press a button/knob for: <strong>{learningLabel}</strong>
+                      <button className="midi-btn midi-btn--small" onClick={stopLearn} style={{marginLeft:8}}>
+                        Cancel
                       </button>
                     </div>
                   )}
-                </div>
+
+                  {/* ── Direct Slot Mappings ── */}
+                  <div className="midi-section">
+                    <label className="midi-label">Direct Slot Mapping</label>
+                    <p className="midi-note">
+                      Pick a layer and slot, then press Learn to map a MIDI button directly to that slot.
+                    </p>
+                    <div className="midi-slot-picker">
+                      <label className="midi-slot-picker__label">Layer</label>
+                      <select
+                        className="midi-select midi-select--sm"
+                        value={slotLearnLayer}
+                        onChange={(e) => setSlotLearnLayer(Number(e.target.value))}
+                        disabled={isLearning}
+                      >
+                        {Array.from({ length: LAYER_COUNT }, (_, i) => (
+                          <option key={i} value={i}>L{i + 1}</option>
+                        ))}
+                      </select>
+                      <label className="midi-slot-picker__label">Slot</label>
+                      <select
+                        className="midi-select midi-select--sm"
+                        value={slotLearnSlot}
+                        onChange={(e) => setSlotLearnSlot(Number(e.target.value))}
+                        disabled={isLearning}
+                      >
+                        {Array.from({ length: SLOT_COUNT }, (_, i) => (
+                          <option key={i} value={i}>{i + 1}</option>
+                        ))}
+                      </select>
+                      <button
+                        className={`midi-btn midi-btn--small${isLearning ? ' midi-btn--learning' : ''}`}
+                        onClick={handleSlotLearnClick}
+                        disabled={isLearning}
+                      >
+                        {isLearning ? '...' : 'Learn'}
+                      </button>
+                    </div>
+
+                    {/* Existing slot mappings list */}
+                    {slotMappings.length > 0 && (
+                      <div className="midi-slot-list">
+                        {slotMappings.map(([midiKey, m]) => (
+                          <div key={midiKey} className="midi-slot-list__item">
+                            <span className="midi-key-badge">{getMappingDisplayText(midiKey)}</span>
+                            <span className="midi-slot-list__label">
+                              → L{m.layerIndex + 1} Slot {m.slotIndex + 1}
+                            </span>
+                            <button
+                              className="midi-btn midi-btn--mini midi-btn--delete"
+                              onClick={() => clearMapping(midiKey)}
+                              title="Remove mapping"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── General Action Mappings ── */}
+                  <div className="midi-section">
+                    <label className="midi-label">Controls & FX</label>
+                    <div className="midi-learn-grid">
+                      {learnActions.map((action) => {
+                        const mappedKey = Object.entries(mappings)
+                          .find(([, m]) => m.action === action.id)?.[0]
+                        const isMapped = Boolean(mappedKey)
+
+                        return (
+                          <div key={action.id} className="midi-learn-item">
+                            <div className="midi-learn-label">{action.label}</div>
+                            <button
+                              className={[
+                                'midi-btn midi-btn--small',
+                                isLearning ? 'midi-btn--learning' : '',
+                                isMapped ? 'midi-btn--mapped' : '',
+                              ].filter(Boolean).join(' ')}
+                              onClick={() => handleLearnClick(action)}
+                              disabled={isLearning}
+                              title={isMapped ? `Mapped to ${getMappingDisplayText(mappedKey)}` : 'Click to learn'}
+                            >
+                              {isMapped ? getMappingDisplayText(mappedKey) : 'Learn'}
+                            </button>
+                            {isMapped && (
+                              <button
+                                className="midi-btn midi-btn--mini midi-btn--delete"
+                                onClick={() => clearMapping(mappedKey)}
+                                title="Clear mapping"
+                              >
+                                🗑️
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Clear all */}
+                  {Object.keys(mappings).length > 0 && (
+                    <div className="midi-section">
+                      <button className="midi-btn midi-btn--danger" onClick={clearAllMappings}>
+                        🗑️ Clear All Mappings ({Object.keys(mappings).length})
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
 
           <div className="midi-section midi-section--footer">
-            <p className="midi-note">
-              💡 Mappings are saved with your show file
-            </p>
+            <p className="midi-note">💡 Mappings save with your show file</p>
           </div>
         </div>
       )}
     </div>
   )
 }
+
+
