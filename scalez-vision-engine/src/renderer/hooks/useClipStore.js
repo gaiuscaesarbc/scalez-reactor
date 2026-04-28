@@ -32,7 +32,7 @@ function getFileExtension(filePath) {
 }
 
 function classifyVideoIssue({ extension, errorCode }) {
-  if (errorCode === 4 || LIKELY_UNSUPPORTED_EXTENSIONS.has(extension)) {
+  if (errorCode === 4 || errorCode === 3 || LIKELY_UNSUPPORTED_EXTENSIONS.has(extension)) {
     return 'unsupported'
   }
   return 'failed'

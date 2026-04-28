@@ -61,7 +61,7 @@ function getMediaErrorDetails(mediaError) {
 }
 
 function classifyVideoFailure({ code, reason, playError, filePath }) {
-  if (code === 4 || playError?.name === 'NotSupportedError') {
+  if (code === 4 || code === 3 || playError?.name === 'NotSupportedError') {
     return {
       type: 'unsupported',
       message: `Unsupported format/codec. Prefer MP4 (H.264) or WebM (VP8/VP9). (${reason})`,
@@ -110,6 +110,10 @@ export default function OutputPreview({
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
   const srcLogRef = useRef({})
+  const canPlayLogRef = useRef({})
+  const playAttemptRef = useRef({})
+  const playRejectLogRef = useRef({})
+  const videoErrorLogRef = useRef({})
   const timelineProgressRef = useRef({})
   const lastTimelineTriggerRef = useRef({})
   const activeClipKeyRef = useRef({})
@@ -277,7 +281,8 @@ export default function OutputPreview({
     const { code, reason } = getMediaErrorDetails(mediaError)
     const classification = classifyVideoFailure({ code, reason, filePath })
 
-    if (import.meta.env.DEV) {
+    if (import.meta.env.DEV && !videoErrorLogRef.current[`${key}-${code}-${reason}`]) {
+      videoErrorLogRef.current[`${key}-${code}-${reason}`] = true
       console.error(
         `[video:error] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason} path=${filePath || 'n/a'}`,
       )
@@ -307,20 +312,28 @@ export default function OutputPreview({
   }
 
   const handleVideoCanPlay = (layerIndex, slotIndex, filePath, event) => {
-    if (import.meta.env.DEV) {
+    const key = `${layerIndex}-${slotIndex}-${filePath}`
+    if (import.meta.env.DEV && !canPlayLogRef.current[key]) {
+      canPlayLogRef.current[key] = true
       console.info(`[video:canplay] layer=${layerIndex + 1} slot=${slotIndex + 1} path=${filePath}`)
     }
 
-    const playPromise = event.currentTarget?.play?.()
+    if (playAttemptRef.current[key]) {
+      return
+    }
+    playAttemptRef.current[key] = true
+
+    const playPromise = event.currentTarget?.paused ? event.currentTarget?.play?.() : null
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch((playError) => {
         const classification = classifyVideoFailure({
-          code: 4,
+          code: 3,
           reason: playError?.message || 'play() rejected',
           playError,
           filePath,
         })
-        if (import.meta.env.DEV) {
+        if (import.meta.env.DEV && !playRejectLogRef.current[key]) {
+          playRejectLogRef.current[key] = true
           console.warn(
             `[video:play-reject] layer=${layerIndex + 1} slot=${slotIndex + 1} name=${playError?.name || 'Error'} message=${playError?.message || 'n/a'}`,
           )
