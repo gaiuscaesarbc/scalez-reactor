@@ -182,6 +182,15 @@ export default function OutputPreview({
           )
         })}
 
+        {activeCount === 0 && (
+          <div className="fallback-screen">
+            <div className="fallback-content">
+              <h1>SCALEZ REACTOR</h1>
+              <p>Ready for output</p>
+            </div>
+          </div>
+        )}
+
         <div className="fx-glow-layer" />
         <div className="fx-strobe-layer" style={{ opacity: strobeOpacity }} />
         <div className={`fx-blackout-layer ${blackout ? 'is-on' : ''}`} />

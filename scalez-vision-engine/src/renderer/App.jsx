@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import LayerStrip from './components/LayerStrip'
 import MasterFxPanel from './components/MasterFxPanel'
 import OutputPreview from './components/OutputPreview'
+import TestModePanel from './components/TestModePanel'
 import { useClipStore } from './hooks/useClipStore'
 import { useFps } from './hooks/useFps'
+import { useSessionTimer } from './hooks/useSessionTimer'
 import { useAudioAnalysis } from './hooks/useAudioAnalysis'
 import { useHotkeys } from './hooks/useHotkeys'
 import {
@@ -56,7 +58,10 @@ function ControlShell() {
   const [audioSensitivity, setAudioSensitivity] = useState(1)
   const [audioSmoothing, setAudioSmoothing] = useState(0.8)
   const [safeMode, setSafeMode] = useState(false)
+  const [showTestMode, setShowTestMode] = useState(false)
+  const [backupLoopPath, setBackupLoopPath] = useState('')
   const fps = useFps()
+  const sessionTimer = useSessionTimer()
 
   const { bassLevel, isActive: audioActive, permissionDenied, startAudio, stopAudio } = useAudioAnalysis({
     sensitivity: audioSensitivity,
@@ -96,6 +101,11 @@ function ControlShell() {
         })
       }
     })
+  }
+
+  const handleTestBassSimulate = () => {
+    // This is a visual test - the audio analysis shows the effect
+    // In real use, the audio would trigger this, but we simulate it for testing
   }
 
   useHotkeys({
@@ -144,15 +154,28 @@ function ControlShell() {
       <header className="top-bar panel-glass">
         <div>
           <h1>SCALEZ Vision Engine</h1>
-          <div className="subtitle">Live Performance Control</div>
+          <div className="subtitle">
+            Live Performance Control
+            {' · '}
+            <span className="session-timer">{sessionTimer.formatted}</span>
+          </div>
         </div>
-        <button
-          type="button"
-          className="pill"
-          onClick={() => window.scalezApi?.toggleOutputFullscreen()}
-        >
-          Fullscreen Output
-        </button>
+        <div className="header-actions">
+          <button
+            type="button"
+            className={`pill ${showTestMode ? 'is-active' : ''}`}
+            onClick={() => setShowTestMode(!showTestMode)}
+          >
+            🧪 Test
+          </button>
+          <button
+            type="button"
+            className="pill"
+            onClick={() => window.scalezApi?.toggleOutputFullscreen()}
+          >
+            Fullscreen Output
+          </button>
+        </div>
       </header>
 
       <OutputPreview
@@ -200,6 +223,15 @@ function ControlShell() {
           onSmoothingChange: setAudioSmoothing,
         }}
       />
+
+      {showTestMode && (
+        <TestModePanel
+          layers={layers}
+          onTriggerClip={triggerClip}
+          onBassSimulate={handleTestBassSimulate}
+          onToggleLayerVisibility={setLayerVisible}
+        />
+      )}
     </main>
   )
 }

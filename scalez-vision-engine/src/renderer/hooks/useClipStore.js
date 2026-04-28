@@ -260,6 +260,73 @@ export function useClipStore() {
 
   const visibleLayers = useMemo(() => layers.filter((layer) => layer.visible), [layers])
 
+  const saveShow = (showName) => {
+    const showData = {
+      name: showName,
+      timestamp: new Date().toISOString(),
+      layers: layers.map((layer) => ({
+        label: layer.label,
+        visible: layer.visible,
+        opacity: layer.opacity,
+        blendMode: layer.blendMode,
+        slots: layer.slots.map((slot) => ({
+          clipName: slot.clipName,
+          filePath: slot.filePath,
+          status: slot.status,
+        })),
+      })),
+    }
+    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
+    shows.push(showData)
+    localStorage.setItem('scalez_shows', JSON.stringify(shows))
+    return showData
+  }
+
+  const loadShow = (showName) => {
+    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
+    const show = shows.find((s) => s.name === showName)
+    if (!show) return false
+
+    updateLayers((current) =>
+      current.map((layer) => {
+        const showLayer = show.layers.find((sl) => sl.label === layer.label)
+        if (!showLayer) return layer
+
+        const slots = layer.slots.map((slot, idx) => {
+          const showSlot = showLayer.slots[idx]
+          return showSlot
+            ? {
+                ...slot,
+                clipName: showSlot.clipName,
+                filePath: showSlot.filePath,
+                status: showSlot.status,
+                errorMessage: '',
+              }
+            : slot
+        })
+
+        return {
+          ...layer,
+          visible: showLayer.visible,
+          opacity: showLayer.opacity,
+          blendMode: showLayer.blendMode,
+          slots,
+        }
+      }),
+    )
+    return true
+  }
+
+  const getSavedShows = () => {
+    return JSON.parse(localStorage.getItem('scalez_shows') || '[]')
+  }
+
+  const deleteShow = (showName) => {
+    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
+    const filtered = shows.filter((s) => s.name !== showName)
+    localStorage.setItem('scalez_shows', JSON.stringify(filtered))
+  }
+
   return {
     layers,
     visibleLayers,
@@ -270,5 +337,9 @@ export function useClipStore() {
     triggerClip,
     loadClipIntoSlot,
     markSlotFailed,
+    saveShow,
+    loadShow,
+    getSavedShows,
+    deleteShow,
   }
 }
