@@ -226,6 +226,10 @@ function isMicPermission(permission) {
   return permission === 'media' || permission === 'microphone' || permission === 'audioCapture'
 }
 
+function isMidiPermission(permission) {
+  return permission === 'midi' || permission === 'midiSysex'
+}
+
 function registerPermissionHandlers() {
   const defaultSession = session.defaultSession
   if (!defaultSession) {
@@ -234,21 +238,21 @@ function registerPermissionHandlers() {
 
   defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const requestingOrigin = details?.requestingOrigin || getOriginFromUrl(webContents?.getURL?.())
-    const allow = isMicPermission(permission) && isAllowedOrigin(requestingOrigin)
-    if (isDev && isMicPermission(permission)) {
+    const allowMic = isMicPermission(permission) && isAllowedOrigin(requestingOrigin)
+    const allowMidi = isMidiPermission(permission) && isAllowedOrigin(requestingOrigin)
+    const allow = allowMic || allowMidi
+    if (isDev && (isMicPermission(permission) || isMidiPermission(permission))) {
       console.log(`[perm:req] permission=${permission} origin=${requestingOrigin || 'n/a'} allow=${allow}`)
     }
-    if (allow) {
-      callback(true)
-      return
-    }
-    callback(false)
+    callback(allow)
   })
 
   defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
     const origin = requestingOrigin || getOriginFromUrl(webContents?.getURL?.())
-    const allow = isMicPermission(permission) && isAllowedOrigin(origin)
-    if (isDev && isMicPermission(permission)) {
+    const allowMic = isMicPermission(permission) && isAllowedOrigin(origin)
+    const allowMidi = isMidiPermission(permission) && isAllowedOrigin(origin)
+    const allow = allowMic || allowMidi
+    if (isDev && (isMicPermission(permission) || isMidiPermission(permission))) {
       console.log(`[perm:chk] permission=${permission} origin=${origin || 'n/a'} allow=${allow}`)
     }
     return allow
