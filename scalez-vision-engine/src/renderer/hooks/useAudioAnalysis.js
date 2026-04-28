@@ -217,9 +217,13 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
       const rawHigh = averageRange(highStart, highEnd)
       const rawFull = averageRange(0, highEnd)
 
-      const weightedLow = Math.pow(rawLow, 1.2) * sensitivity * eqGainsRef.current.low
-      const weightedMid = Math.pow(rawMid, 1.1) * sensitivity * eqGainsRef.current.mid
-      const weightedHigh = Math.pow(rawHigh, 1.05) * sensitivity * eqGainsRef.current.high
+      // Keep low-level input responsive: use sub-linear curves plus modest gain.
+      const weightedLow =
+        Math.min(1, Math.pow(rawLow, 0.9) * sensitivity * 1.7 * eqGainsRef.current.low)
+      const weightedMid =
+        Math.min(1, Math.pow(rawMid, 0.9) * sensitivity * 1.4 * eqGainsRef.current.mid)
+      const weightedHigh =
+        Math.min(1, Math.pow(rawHigh, 0.9) * sensitivity * 1.2 * eqGainsRef.current.high)
       const weightedFull = (weightedLow + weightedMid + weightedHigh + rawFull) / 4
 
       const rawBass = weightedLow

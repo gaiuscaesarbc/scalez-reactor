@@ -120,15 +120,15 @@ function ControlShell() {
   const [audioSmoothing, setAudioSmoothing] = useState(0.8)
   const [audioEq, setAudioEq] = useState({ low: 1, mid: 1, high: 1 })
   const [audioFxLinks, setAudioFxLinks] = useState({
-    glow: { amount: 0.35, threshold: 0.08, mode: 'normal', source: 'low' },
-    strobe: { amount: 0, threshold: 0.32, mode: 'pulse', source: 'low' },
-    shake: { amount: 0, threshold: 0.14, mode: 'normal', source: 'low' },
-    brightness: { amount: 0.25, threshold: 0.08, mode: 'normal', source: 'low' },
+    glow: { amount: 0.35, threshold: 0.03, mode: 'normal', source: 'low' },
+    strobe: { amount: 0, threshold: 0.12, mode: 'pulse', source: 'low' },
+    shake: { amount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
+    brightness: { amount: 0.25, threshold: 0.03, mode: 'normal', source: 'low' },
   })
   const [layerAudioLinks, setLayerAudioLinks] = useState({
-    0: { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' },
-    1: { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' },
-    2: { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' },
+    0: { amount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
+    1: { amount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
+    2: { amount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
   })
   const [layerVideoMotion, setLayerVideoMotion] = useState({
     0: makeDefaultVideoMotion(),
