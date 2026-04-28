@@ -7,6 +7,13 @@ const FX_KEYS = [
   { key: 'brightness', label: 'Brightness', min: 0.5, max: 2, step: 0.01 },
 ]
 
+const AUDIO_LINK_KEYS = [
+  { key: 'glow', label: 'Glow' },
+  { key: 'strobe', label: 'Strobe' },
+  { key: 'shake', label: 'Shake' },
+  { key: 'brightness', label: 'Brightness' },
+]
+
 export default function MasterFxPanel({
   masterFx,
   blackout,
@@ -69,8 +76,10 @@ export default function MasterFxPanel({
             <h3>Audio Analysis</h3>
             <AudioMeter
               bassLevel={audioPanel.bassLevel}
+              spectrumLevels={audioPanel.spectrumLevels}
               isAudioActive={audioPanel.isActive}
               permissionDenied={audioPanel.permissionDenied}
+              audioError={audioPanel.audioError}
               sensitivity={audioPanel.sensitivity}
               smoothing={audioPanel.smoothing}
               onStartAudio={audioPanel.onStartAudio}
@@ -78,12 +87,134 @@ export default function MasterFxPanel({
               onSensitivityChange={audioPanel.onSensitivityChange}
               onSmoothingChange={audioPanel.onSmoothingChange}
             />
+
+            <div className="audio-link-panel">
+              <div className="audio-link-panel__title">EQ</div>
+              <div className="audio-link-grid">
+                <div className="audio-link-card">
+                  <div className="audio-link-card__title">Low Band Gain</div>
+                  <label className="audio-setting">
+                    <span>
+                      Gain: <strong>{audioPanel.eq.low.toFixed(2)}</strong>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.01"
+                      value={audioPanel.eq.low}
+                      onChange={(event) => audioPanel.onEqChange?.('low', Number(event.target.value))}
+                    />
+                  </label>
+                </div>
+                <div className="audio-link-card">
+                  <div className="audio-link-card__title">Mid Band Gain</div>
+                  <label className="audio-setting">
+                    <span>
+                      Gain: <strong>{audioPanel.eq.mid.toFixed(2)}</strong>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.01"
+                      value={audioPanel.eq.mid}
+                      onChange={(event) => audioPanel.onEqChange?.('mid', Number(event.target.value))}
+                    />
+                  </label>
+                </div>
+                <div className="audio-link-card">
+                  <div className="audio-link-card__title">High Band Gain</div>
+                  <label className="audio-setting">
+                    <span>
+                      Gain: <strong>{audioPanel.eq.high.toFixed(2)}</strong>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.01"
+                      value={audioPanel.eq.high}
+                      onChange={(event) => audioPanel.onEqChange?.('high', Number(event.target.value))}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="audio-link-panel">
+              <div className="audio-link-panel__title">Audio Reactive Links</div>
+              <div className="audio-link-grid">
+                {AUDIO_LINK_KEYS.map((fx) => (
+                  <div key={fx.key} className="audio-link-card">
+                    <div className="audio-link-card__title">{fx.label}</div>
+                    <label className="audio-setting">
+                      <span>
+                        Amount: <strong>{audioPanel.fxLinks[fx.key].amount.toFixed(2)}</strong>
+                      </span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={audioPanel.fxLinks[fx.key].amount}
+                        onChange={(event) =>
+                          audioPanel.onFxLinkChange?.(fx.key, 'amount', Number(event.target.value))
+                        }
+                      />
+                    </label>
+                    <label className="audio-setting">
+                      <span>
+                        Threshold: <strong>{audioPanel.fxLinks[fx.key].threshold.toFixed(2)}</strong>
+                      </span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={audioPanel.fxLinks[fx.key].threshold}
+                        onChange={(event) =>
+                          audioPanel.onFxLinkChange?.(fx.key, 'threshold', Number(event.target.value))
+                        }
+                      />
+                    </label>
+                    <label className="audio-setting">
+                      <span>Mode</span>
+                      <select
+                        value={audioPanel.fxLinks[fx.key].mode}
+                        onChange={(event) =>
+                          audioPanel.onFxLinkChange?.(fx.key, 'mode', event.target.value)
+                        }
+                      >
+                        <option value="normal">Normal</option>
+                        <option value="invert">Invert</option>
+                        <option value="pulse">Pulse</option>
+                      </select>
+                    </label>
+                    <label className="audio-setting">
+                      <span>Spectrum</span>
+                      <select
+                        value={audioPanel.fxLinks[fx.key].source || 'low'}
+                        onChange={(event) =>
+                          audioPanel.onFxLinkChange?.(fx.key, 'source', event.target.value)
+                        }
+                      >
+                        <option value="low">Low</option>
+                        <option value="mid">Mid</option>
+                        <option value="high">High</option>
+                        <option value="full">Full</option>
+                      </select>
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
 
       <p className="bottom-panel__note">
-        Bass energy automatically boosts glow and brightness. Arrow keys scroll clip grids.
+        Bass energy can now be linked into glow, strobe, shake, and brightness. Arrow keys scroll clip grids.
       </p>
     </section>
   )

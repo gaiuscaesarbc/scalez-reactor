@@ -7,6 +7,12 @@ contextBridge.exposeInMainWorld('scalezApi', {
   getPlatform: () => ipcRenderer.invoke('app:get-platform'),
   pickVideoFile: () => ipcRenderer.invoke('clips:pick-video'),
   pathExists: (targetPath) => ipcRenderer.invoke('clips:path-exists', targetPath),
+  toMediaUrl: (targetPath) => {
+    if (!targetPath || typeof targetPath !== 'string') {
+      return ''
+    }
+    return `scalez-media://local/${encodeURIComponent(targetPath)}`
+  },
   publishOutputState: (state) => ipcRenderer.send('output:state-publish', state),
   getOutputState: () => ipcRenderer.invoke('output:state-get'),
   onOutputStateUpdate: (callback) => {

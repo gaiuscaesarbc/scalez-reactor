@@ -7,13 +7,14 @@ export const DEFAULT_MASTER_FX = {
   brightness: 1,
 }
 
-export function buildOutputState({ layers, masterFx, blackout, bassLevel = 0.2 }) {
+export function buildOutputState({ layers, masterFx, blackout, bassLevel = 0.2, spectrumLevels = null }) {
   return {
     layers,
     masterFx,
     blackout,
     audio: {
       bassLevel,
+      spectrumLevels: spectrumLevels || { full: bassLevel, low: bassLevel, mid: 0, high: 0 },
     },
     updatedAt: Date.now(),
   }

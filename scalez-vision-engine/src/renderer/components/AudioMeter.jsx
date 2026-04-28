@@ -1,7 +1,9 @@
 export default function AudioMeter({
   bassLevel,
+  spectrumLevels,
   isAudioActive,
   permissionDenied,
+  audioError,
   sensitivity,
   smoothing,
   onStartAudio,
@@ -20,7 +22,12 @@ export default function AudioMeter({
       </div>
 
       <div className="audio-controls">
-        {permissionDenied && <div className="audio-error">Permission denied</div>}
+        {audioError && (
+          <div className="audio-error">
+            {audioError}
+            {permissionDenied ? ' (Check microphone privacy permissions.)' : ''}
+          </div>
+        )}
         <button
           type="button"
           className={`audio-btn ${isAudioActive ? 'is-active' : ''}`}
@@ -28,6 +35,26 @@ export default function AudioMeter({
         >
           {isAudioActive ? 'Stop' : 'Start'} Input
         </button>
+      </div>
+
+      <div className="audio-spectrum-grid">
+        {[
+          { key: 'low', label: 'LOW' },
+          { key: 'mid', label: 'MID' },
+          { key: 'high', label: 'HIGH' },
+          { key: 'full', label: 'FULL' },
+        ].map((band) => {
+          const value = spectrumLevels?.[band.key] ?? 0
+          return (
+            <div key={band.key} className="audio-spectrum-item">
+              <div className="audio-meter__label">{band.label}</div>
+              <div className="audio-meter__track">
+                <div className="audio-meter__fill" style={{ width: `${Math.round(value * 100)}%` }} />
+              </div>
+              <div className="audio-meter__value">{value.toFixed(2)}</div>
+            </div>
+          )
+        })}
       </div>
 
       {isAudioActive && sensitivity !== undefined && smoothing !== undefined ? (
