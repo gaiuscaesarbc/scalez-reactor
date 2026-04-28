@@ -1,50 +1,72 @@
+import { useMemo } from 'react'
+import LayerStrip from './components/LayerStrip'
+import OutputPreview from './components/OutputPreview'
+import { useClipStore } from './hooks/useClipStore'
+import { useFps } from './hooks/useFps'
+
 function getWindowMode() {
   const params = new URLSearchParams(window.location.search)
   const mode = params.get('window')
   return mode === 'output' ? 'output' : 'control'
 }
 
-function OutputShell() {
+function OutputShell({ layers }) {
   return (
     <main className="output-shell">
       <div className="output-label">OUTPUT WINDOW</div>
-      <h1>SCALEZ Vision Engine</h1>
-      <p>Composited visual feed will render here in v1 implementation.</p>
+      <OutputPreview layers={layers} fps={60} bassLevel={0.2} />
     </main>
   )
 }
 
 function ControlShell() {
+  const {
+    layers,
+    setLayerVisible,
+    setLayerOpacity,
+    setLayerBlendMode,
+    clearLayer,
+    triggerClip,
+  } = useClipStore()
+  const fps = useFps()
+
+  const displayLayers = useMemo(() => layers.slice().reverse(), [layers])
+
   return (
     <main className="control-shell">
-      <header className="top-bar">
-        <h1>SCALEZ Vision Engine</h1>
+      <header className="top-bar panel-glass">
+        <div>
+          <h1>SCALEZ Vision Engine</h1>
+          <div className="subtitle">Live Performance Control</div>
+        </div>
         <button
           type="button"
           className="pill"
           onClick={() => window.scalezApi?.toggleOutputFullscreen()}
         >
-          Toggle Output Fullscreen
+          Fullscreen Output
         </button>
       </header>
 
-      <section className="panel">
-        <h2>Control Window Ready</h2>
-        <p>
-          Electron + React + Vite scaffold is active with dedicated control and output
-          windows.
-        </p>
+      <OutputPreview layers={layers} fps={fps} bassLevel={0.2} />
+
+      <section className="layer-stack">
+        {displayLayers.map((layer) => (
+          <LayerStrip
+            key={layer.label}
+            layer={layer}
+            onToggleVisible={setLayerVisible}
+            onOpacityChange={setLayerOpacity}
+            onBlendModeChange={setLayerBlendMode}
+            onClear={clearLayer}
+            onTrigger={triggerClip}
+          />
+        ))}
       </section>
 
-      <section className="grid">
-        <div className="panel">
-          <h3>src/main</h3>
-          <p>Electron main and preload processes configured.</p>
-        </div>
-        <div className="panel">
-          <h3>src/renderer</h3>
-          <p>Renderer app wired through Vite and ready for UI buildout.</p>
-        </div>
+      <section className="bottom-panel panel-glass">
+        <h2>Master FX + Audio</h2>
+        <p>Placeholder panel ready for next milestone (FX, blackout/reset, live audio analysis).</p>
       </section>
     </main>
   )
@@ -52,5 +74,6 @@ function ControlShell() {
 
 export default function App() {
   const mode = getWindowMode()
-  return mode === 'output' ? <OutputShell /> : <ControlShell />
+  const { layers } = useClipStore()
+  return mode === 'output' ? <OutputShell layers={layers} /> : <ControlShell />
 }
