@@ -42,19 +42,30 @@ function probeVideoPlayable(filePath) {
   return new Promise((resolve) => {
     const src = toMediaUrl(filePath)
     const video = document.createElement('video')
-    video.preload = 'metadata'
+    // Use 'auto' preload so the browser tries to fully buffer + decode, not just read metadata.
+    video.preload = 'auto'
     video.muted = true
     video.playsInline = true
+    // Append offscreen so the decoder actually initializes (required by some Chromium codecs).
+    video.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none'
+    document.body.appendChild(video)
 
     let settled = false
 
     const cleanup = () => {
       video.oncanplay = null
       video.onerror = null
-      video.onloadedmetadata = null
-      video.pause()
+      video.ontimeupdate = null
+      try {
+        video.pause()
+      } catch {
+        // ignore
+      }
       video.removeAttribute('src')
       video.load()
+      if (video.parentNode) {
+        video.parentNode.removeChild(video)
+      }
     }
 
     const finish = (result) => {
@@ -66,11 +77,13 @@ function probeVideoPlayable(filePath) {
       resolve(result)
     }
 
+    // 8s total — generous enough for large files / slow disks.
     const timeout = setTimeout(() => {
-      finish({ ok: false, src, errorCode: 4, message: 'Timed out while probing video playback.' })
-    }, 6000)
+      finish({ ok: false, src, errorCode: 4, message: 'Timed out while probing codec support.' })
+    }, 8000)
 
-    video.oncanplay = () => {
+    // `timeupdate` fires only after at least one decoded video frame — this confirms codec support.
+    video.ontimeupdate = () => {
       clearTimeout(timeout)
       finish({ ok: true, src })
     }
@@ -82,12 +95,22 @@ function probeVideoPlayable(filePath) {
         ok: false,
         src,
         errorCode: mediaError?.code || 4,
-        message: mediaError?.message || 'Video failed to load in Chromium/Electron.',
+        message: mediaError?.message || 'Video failed to load or decode in Chromium/Electron.',
       })
     }
 
-    video.onloadedmetadata = () => {
-      // Keep waiting for canplay/error to ensure decoder support is actually available.
+    // On canplay: container is readable. Now try to play so the decoder starts.
+    // Decode errors (HEVC, AV1, unsupported codec) surface as errors during play, not before.
+    video.oncanplay = () => {
+      video.play().catch((playError) => {
+        clearTimeout(timeout)
+        finish({
+          ok: false,
+          src,
+          errorCode: 4,
+          message: playError?.message || 'play() rejected during codec probe.',
+        })
+      })
     }
 
     video.src = src
