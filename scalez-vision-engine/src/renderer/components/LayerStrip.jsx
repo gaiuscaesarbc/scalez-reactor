@@ -22,10 +22,12 @@ export default function LayerStrip({
   onScrollRef,
   onAudioLinkChange,
   onVideoMotionChange,
+  onRebuildReverseCache,
 }) {
   const scrollContainerRef = useRef(null)
   const [showAudioLink, setShowAudioLink] = useState(false)
   const [showVideoMotion, setShowVideoMotion] = useState(false)
+  const [isRebuildingReverse, setIsRebuildingReverse] = useState(false)
   const activeClip =
     typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
   const cuedClip =
@@ -211,6 +213,55 @@ export default function LayerStrip({
                   }
                 />
               </label>
+
+              <label className="toggle-line">
+                <span>Bounce (Fwd/Rev)</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(videoMotion.bounceEnabled)}
+                  onChange={(event) =>
+                    onVideoMotionChange?.(
+                      layer.layerIndex,
+                      'bounceEnabled',
+                      event.target.checked,
+                    )
+                  }
+                />
+              </label>
+
+              <label className="control-line">
+                <span>Bounce Speed: {(videoMotion.bounceSpeed ?? 1).toFixed(2)}x</span>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="4"
+                  step="0.05"
+                  value={videoMotion.bounceSpeed ?? 1}
+                  onChange={(event) =>
+                    onVideoMotionChange?.(layer.layerIndex, 'bounceSpeed', Number(event.target.value))
+                  }
+                />
+              </label>
+
+              <button
+                type="button"
+                className="bounce-rebuild-btn"
+                disabled={!activeClip?.filePath || isRebuildingReverse}
+                onClick={async () => {
+                  if (!activeClip?.filePath || !onRebuildReverseCache) {
+                    return
+                  }
+                  setIsRebuildingReverse(true)
+                  try {
+                    await onRebuildReverseCache(layer.layerIndex)
+                  } finally {
+                    setIsRebuildingReverse(false)
+                  }
+                }}
+                title={activeClip?.filePath ? 'Force rebuild reverse cache for active clip' : 'Load and trigger a clip first'}
+              >
+                {isRebuildingReverse ? 'Rebuilding Bounce…' : 'Rebuild Bounce'}
+              </button>
 
               <label className="control-line">
                 <span>Audio Speed Amount: {videoMotion.speedAmount.toFixed(2)}</span>

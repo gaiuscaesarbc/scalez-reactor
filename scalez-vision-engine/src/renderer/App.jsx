@@ -22,18 +22,32 @@ function clamp01(value) {
   return Math.min(1, Math.max(0, value))
 }
 
+function smoothstep01(value) {
+  const x = clamp01(value)
+  return x * x * (3 - 2 * x)
+}
+
 function getReactiveAmount(level, threshold, mode, amount) {
   const normalizedThreshold = clamp01(threshold)
   const normalizedAmount = clamp01(amount)
   const effectiveRange = Math.max(0.0001, 1 - normalizedThreshold)
 
   if (mode === 'pulse') {
-    return level >= normalizedThreshold ? normalizedAmount : 0
+    // Soft pulse gate: ramps in/out around threshold instead of hard on/off.
+    const width = 0.1
+    const gateStart = clamp01(normalizedThreshold - width * 0.5)
+    const gateEnd = clamp01(normalizedThreshold + width * 0.5)
+    const gateRange = Math.max(0.0001, gateEnd - gateStart)
+    const gateValue = smoothstep01((clamp01(level) - gateStart) / gateRange)
+    return gateValue * normalizedAmount
   }
 
   const sourceLevel = mode === 'invert' ? 1 - clamp01(level) : clamp01(level)
   const gatedLevel = Math.max(0, sourceLevel - normalizedThreshold)
-  return (gatedLevel / effectiveRange) * normalizedAmount
+  const normalizedLevel = gatedLevel / effectiveRange
+  // Ease-in response avoids sharp jumps as audio crosses threshold.
+  const easedLevel = smoothstep01(normalizedLevel)
+  return easedLevel * normalizedAmount
 }
 
 function getSpectrumSourceLevel(spectrumLevels, source) {
@@ -51,6 +65,8 @@ function makeDefaultVideoMotion() {
     inPoint: 0,
     outPoint: 1,
     baseSpeed: 1,
+    bounceEnabled: false,
+    bounceSpeed: 1,
     speedAmount: 0,
     speedThreshold: 0.12,
     speedMode: 'normal',
@@ -116,8 +132,8 @@ function ControlShell() {
   const { bpm, tap: tapTempo, reset: resetTempo } = useTapTempo()
   const [masterFx, setMasterFx] = useState(DEFAULT_MASTER_FX)
   const [blackout, setBlackout] = useState(false)
-  const [audioSensitivity, setAudioSensitivity] = useState(1)
-  const [audioSmoothing, setAudioSmoothing] = useState(0.8)
+  const [audioSensitivity, setAudioSensitivity] = useState(0.75)
+  const [audioSmoothing, setAudioSmoothing] = useState(0.55)
   const [audioEq, setAudioEq] = useState({ low: 1, mid: 1, high: 1 })
   const [audioFxLinks, setAudioFxLinks] = useState({
     glow: { amount: 0.35, threshold: 0.03, mode: 'normal', source: 'low' },
@@ -200,7 +216,10 @@ function ControlShell() {
 
   // Restore last show on mount
   useEffect(() => {
-    restoreLastShow()
+    const result = restoreLastShow()
+    if (result?.appSettings) {
+      applyAppSettings(result.appSettings)
+    }
     setSavedShows(getSavedShows())
   }, [])
 
@@ -215,6 +234,12 @@ function ControlShell() {
   useEffect(() => {
     const handleMidiCommand = (event) => {
       const { mapping, midiValue } = event.detail
+
+      // Ignore release/zero values for button mappings so note-off does not
+      // instantly undo toggles or retrigger destructive actions.
+      if (mapping?.type === 'button' && Number(midiValue) <= 0) {
+        return
+      }
 
       switch (mapping.action) {
         case 'blackout':
@@ -285,6 +310,57 @@ function ControlShell() {
           }
           break
 
+        case 'layer-1-bounce-toggle':
+          setLayerVideoMotion((current) => ({
+            ...current,
+            0: { ...(current[0] || makeDefaultVideoMotion()), bounceEnabled: !(current[0]?.bounceEnabled) },
+          }))
+          break
+
+        case 'layer-2-bounce-toggle':
+          setLayerVideoMotion((current) => ({
+            ...current,
+            1: { ...(current[1] || makeDefaultVideoMotion()), bounceEnabled: !(current[1]?.bounceEnabled) },
+          }))
+          break
+
+        case 'layer-3-bounce-toggle':
+          setLayerVideoMotion((current) => ({
+            ...current,
+            2: { ...(current[2] || makeDefaultVideoMotion()), bounceEnabled: !(current[2]?.bounceEnabled) },
+          }))
+          break
+
+        case 'focused-layer-bounce-toggle':
+          if (focusedLayer !== null) {
+            setLayerVideoMotion((current) => ({
+              ...current,
+              [focusedLayer]: {
+                ...(current[focusedLayer] || makeDefaultVideoMotion()),
+                bounceEnabled: !(current[focusedLayer]?.bounceEnabled),
+              },
+            }))
+          }
+          break
+
+        case 'layer-1-clear':
+          clearLayer(0)
+          break
+
+        case 'layer-2-clear':
+          clearLayer(1)
+          break
+
+        case 'layer-3-clear':
+          clearLayer(2)
+          break
+
+        case 'focused-layer-clear':
+          if (focusedLayer !== null) {
+            clearLayer(focusedLayer)
+          }
+          break
+
         default:
           break
       }
@@ -292,12 +368,42 @@ function ControlShell() {
 
     window.addEventListener('midi-command', handleMidiCommand)
     return () => window.removeEventListener('midi-command', handleMidiCommand)
-  }, [setLayerOpacity, focusedLayer, tapTempo, flashMidiSlot, handleLaunchCue, triggerClip])
+  }, [
+    clearLayer,
+    setLayerOpacity,
+    focusedLayer,
+    tapTempo,
+    flashMidiSlot,
+    handleLaunchCue,
+    triggerClip,
+    setLayerVideoMotion,
+  ])
+
+  const buildAppSettings = () => ({
+    audioSensitivity,
+    audioSmoothing,
+    audioEq,
+    audioFxLinks,
+    layerAudioLinks,
+    layerVideoMotion,
+    masterFx,
+  })
+
+  const applyAppSettings = (settings) => {
+    if (!settings) return
+    if (settings.audioSensitivity != null) setAudioSensitivity(settings.audioSensitivity)
+    if (settings.audioSmoothing != null) setAudioSmoothing(settings.audioSmoothing)
+    if (settings.audioEq != null) setAudioEq(settings.audioEq)
+    if (settings.audioFxLinks != null) setAudioFxLinks(settings.audioFxLinks)
+    if (settings.layerAudioLinks != null) setLayerAudioLinks(settings.layerAudioLinks)
+    if (settings.layerVideoMotion != null) setLayerVideoMotion(settings.layerVideoMotion)
+    if (settings.masterFx != null) setMasterFx(settings.masterFx)
+  }
 
   // Autosave MIDI mappings with show data
   useEffect(() => {
     const autosaveInterval = setInterval(() => {
-      autosaveShow(midiState.getMappings())
+      autosaveShow(midiState.getMappings(), buildAppSettings())
     }, 30000)
 
     return () => clearInterval(autosaveInterval)
@@ -306,6 +412,7 @@ function ControlShell() {
   const {
     bassLevel,
     spectrumLevels,
+    spectrumBins,
     isActive: audioActive,
     permissionDenied,
     audioError,
@@ -395,7 +502,12 @@ function ControlShell() {
       const prev = current[layerIndex] || makeDefaultVideoMotion()
       const nextRaw = {
         ...prev,
-        [field]: field.includes('Mode') || field.includes('Source') ? value : Number(value),
+        [field]:
+          field === 'bounceEnabled'
+            ? Boolean(value)
+            : field.includes('Mode') || field.includes('Source')
+              ? value
+              : Number(value),
       }
 
       // Keep a valid range: outPoint always >= inPoint + 0.01
@@ -416,15 +528,34 @@ function ControlShell() {
     })
   }, [])
 
+  const rebuildLayerReverseCache = useCallback(async (layerIndex) => {
+    const layer = layers[layerIndex]
+    if (!layer || typeof layer.activeSlotIndex !== 'number') {
+      return false
+    }
+
+    const active = layer.slots[layer.activeSlotIndex]
+    if (!active?.filePath) {
+      return false
+    }
+
+    await window.scalezApi?.rebuildReverseCache?.(active.filePath)
+    return true
+  }, [layers])
+
   const effectiveLayers = useMemo(
     () => layers.map((layer) => {
       const link = layerAudioLinks[layer.layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }
       const sourceLevel = getSpectrumSourceLevel(spectrumLevels, link.source)
-      const reactiveBoost = getReactiveAmount(sourceLevel, link.threshold, link.mode, link.amount)
+      const linkAmount = clamp01(link.amount ?? 0)
+      const reactiveLevel = getReactiveAmount(sourceLevel, link.threshold, link.mode, 1)
+      // Modulate within a range so audio link remains visible even when base opacity is 1.
+      const opacityFloor = Math.max(0, layer.opacity * (1 - linkAmount))
+      const reactiveOpacity = opacityFloor + reactiveLevel * (layer.opacity - opacityFloor)
       const videoMotion = layerVideoMotion[layer.layerIndex] || makeDefaultVideoMotion()
       return {
         ...layer,
-        opacity: Math.min(1, layer.opacity + reactiveBoost),
+        opacity: Math.min(1, reactiveOpacity),
         videoMotion,
       }
     }),
@@ -464,10 +595,10 @@ function ControlShell() {
 
       const base = {
         ...masterFx,
-        glow: Math.min(1, masterFx.glow + glowBoost),
-        strobe: Math.min(1, masterFx.strobe + strobeBoost),
-        shake: Math.min(1, masterFx.shake + shakeBoost),
-        brightness: Math.min(2, masterFx.brightness + brightnessBoost),
+        glow: Math.min(1, masterFx.glow + glowBoost * 0.78),
+        strobe: Math.min(1, masterFx.strobe + strobeBoost * 0.52),
+        shake: Math.min(1, masterFx.shake + shakeBoost * 0.62),
+        brightness: Math.min(2, masterFx.brightness + brightnessBoost * 0.58),
       }
       if (safeMode) {
         return {
@@ -510,11 +641,14 @@ function ControlShell() {
           <ShowManager
             savedShows={savedShows}
             onSaveShow={(name) => {
-              saveShow(name, midiState.getMappings())
+              saveShow(name, midiState.getMappings(), buildAppSettings())
               setSavedShows(getSavedShows())
             }}
             onLoadShow={(name) => {
-              loadShow(name)
+              const result = loadShow(name)
+              if (result?.appSettings) {
+                applyAppSettings(result.appSettings)
+              }
               if (midiMappings) {
                 midiState.loadMappings(midiMappings)
               }
@@ -579,6 +713,14 @@ function ControlShell() {
           >
             Fullscreen Output
           </button>
+          <button
+            type="button"
+            className="pill"
+            onClick={() => window.scalezApi?.openDevTools()}
+            title="Open DevTools for this window"
+          >
+            DevTools
+          </button>
         </div>
       </header>
 
@@ -587,10 +729,12 @@ function ControlShell() {
         fps={fps}
         bassLevel={bassLevel}
         spectrumLevels={spectrumLevels}
+        spectrumBins={spectrumBins}
         masterFx={effectiveMasterFx}
         blackout={blackout}
         showOverlays
         markSlotFailed={markSlotFailed}
+        enablePreload={false}
       />
 
       {!hasAnyLoadedClip && (
@@ -619,6 +763,7 @@ function ControlShell() {
             onScrollRef={handleScrollRef}
             onAudioLinkChange={setLayerAudioLink}
             onVideoMotionChange={setLayerVideoMotionValue}
+            onRebuildReverseCache={rebuildLayerReverseCache}
           />
         ))}
       </section>
@@ -634,6 +779,7 @@ function ControlShell() {
         audioPanel={{
           bassLevel,
           spectrumLevels,
+          spectrumBins,
           isActive: audioActive,
           permissionDenied,
           audioError,

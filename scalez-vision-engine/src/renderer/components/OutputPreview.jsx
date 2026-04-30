@@ -6,18 +6,29 @@ function clamp01(value) {
   return Math.min(1, Math.max(0, value))
 }
 
+function smoothstep01(value) {
+  const x = clamp01(value)
+  return x * x * (3 - 2 * x)
+}
+
 function getReactiveAmount(level, threshold, mode, amount) {
   const normalizedThreshold = clamp01(threshold)
   const normalizedAmount = clamp01(amount)
   const effectiveRange = Math.max(0.0001, 1 - normalizedThreshold)
 
   if (mode === 'pulse') {
-    return level >= normalizedThreshold ? normalizedAmount : 0
+    const width = 0.1
+    const gateStart = clamp01(normalizedThreshold - width * 0.5)
+    const gateEnd = clamp01(normalizedThreshold + width * 0.5)
+    const gateRange = Math.max(0.0001, gateEnd - gateStart)
+    const gateValue = smoothstep01((clamp01(level) - gateStart) / gateRange)
+    return gateValue * normalizedAmount
   }
 
   const sourceLevel = mode === 'invert' ? 1 - clamp01(level) : clamp01(level)
   const gatedLevel = Math.max(0, sourceLevel - normalizedThreshold)
-  return (gatedLevel / effectiveRange) * normalizedAmount
+  const normalizedLevel = gatedLevel / effectiveRange
+  return smoothstep01(normalizedLevel) * normalizedAmount
 }
 
 function getSpectrumSourceLevel(spectrumLevels, source, fallbackBass) {
@@ -96,11 +107,44 @@ function LayerPreviewBadge({ layer }) {
   )
 }
 
+function seekVideoEfficient(video, timeSeconds) {
+  const target = Math.max(0, timeSeconds)
+  // For bounce playback we prefer precise seeks over keyframe-only fastSeek,
+  // which can look like a freeze on long-GOP media.
+  video.currentTime = target
+}
+
+function getVideoErrorKey(layerIndex, slotIndex, filePath) {
+  return `${layerIndex}-${slotIndex}-${filePath || 'no-file'}`
+}
+
+function getSegmentBounds(video, motion) {
+  if (!video || Number.isNaN(video.duration) || !Number.isFinite(video.duration) || video.duration <= 0) {
+    return null
+  }
+
+  const inPoint = clamp01(motion?.inPoint ?? 0)
+  const outPoint = clamp01(motion?.outPoint ?? 1)
+  const start = video.duration * Math.min(inPoint, Math.max(0, outPoint - 0.01))
+  const end = video.duration * Math.max(outPoint, inPoint + 0.01)
+
+  return {
+    start,
+    end,
+    length: Math.max(0.05, end - start),
+  }
+}
+
+function getBounceClipKey(filePath) {
+  return filePath || '__empty__'
+}
+
 export default function OutputPreview({
   layers,
   fps,
   bassLevel,
   spectrumLevels,
+  spectrumBins,
   masterFx,
   blackout,
   showOverlays,
@@ -111,12 +155,41 @@ export default function OutputPreview({
   const preloadedRefsRef = useRef({})
   const srcLogRef = useRef({})
   const canPlayLogRef = useRef({})
+  const [, setBounceRenderVersion] = useState(0)
   const playAttemptRef = useRef({})
   const playRejectLogRef = useRef({})
+
+  const refreshBounceRender = () => {
+    setBounceRenderVersion((version) => version + 1)
+  }
+
+  function getBounceSegmentBounds(video, motion, phase) {
+    const segment = getSegmentBounds(video, motion)
+    if (!segment) {
+      return null
+    }
+
+    if (phase !== 'reverse') {
+      return segment
+    }
+
+    return {
+      start: Math.max(0, video.duration - segment.end),
+      end: Math.min(video.duration, video.duration - segment.start),
+      length: segment.length,
+    }
+  }
   const videoErrorLogRef = useRef({})
   const timelineProgressRef = useRef({})
   const lastTimelineTriggerRef = useRef({})
   const activeClipKeyRef = useRef({})
+  const bouncePhaseRef = useRef({})
+  const reverseClipPathRef = useRef({})
+  const reverseClipRequestRef = useRef({})
+  const reverseClipRebuildAttemptsRef = useRef({})
+  const latestLayersRef = useRef(layers)
+  const latestBassRef = useRef(bassLevel)
+  const latestSpectrumRef = useRef(spectrumLevels)
   const [syncStatus, setSyncStatus] = useState('synced')
   const [videoErrors, setVideoErrors] = useState({})
 
@@ -124,6 +197,12 @@ export default function OutputPreview({
   useEffect(() => {
     setSyncStatus('synced')
   }, [layers])
+
+  useEffect(() => {
+    latestLayersRef.current = layers
+    latestBassRef.current = bassLevel
+    latestSpectrumRef.current = spectrumLevels
+  }, [layers, bassLevel, spectrumLevels])
 
   // Apply per-layer timeline range and audio-reactive playback motion.
   useEffect(() => {
@@ -134,11 +213,11 @@ export default function OutputPreview({
       }
 
       const motion = layer.videoMotion || {}
-      const inPoint = clamp01(motion.inPoint ?? 0)
-      const outPoint = clamp01(motion.outPoint ?? 1)
-      const segmentStart = video.duration * Math.min(inPoint, Math.max(0, outPoint - 0.01))
-      const segmentEnd = video.duration * Math.max(outPoint, inPoint + 0.01)
-      const segmentLength = Math.max(0.05, segmentEnd - segmentStart)
+      const segment = getSegmentBounds(video, motion)
+      if (!segment) {
+        return
+      }
+      const { start: segmentStart, end: segmentEnd, length: segmentLength } = segment
 
       const activeSlot = typeof layer.activeSlotIndex === 'number' ? layer.activeSlotIndex : -1
       const activeSlotObj = activeSlot >= 0 ? layer.slots?.[activeSlot] : null
@@ -148,6 +227,7 @@ export default function OutputPreview({
         activeClipKeyRef.current[layer.layerIndex] = clipKey
         timelineProgressRef.current[layer.layerIndex] = 0
         lastTimelineTriggerRef.current[layer.layerIndex] = false
+        bouncePhaseRef.current[layer.layerIndex] = 'forward'
         video.currentTime = segmentStart
       }
 
@@ -162,7 +242,16 @@ export default function OutputPreview({
         motion.speedMode || 'normal',
         motion.speedAmount ?? 0,
       )
-      const playbackRate = Math.max(0.05, Math.min(4, (motion.baseSpeed ?? 1) + speedBoost))
+      const bounceEnabled = Boolean(motion.bounceEnabled)
+      if (bounceEnabled) {
+        const bounceSpeed = Math.max(0.05, Math.min(4, (motion.bounceSpeed ?? 1) + speedBoost))
+        video.playbackRate = bounceSpeed
+        return
+      }
+
+      const basePlayback = motion.baseSpeed ?? 1
+      const playbackRate = Math.max(0.05, Math.min(4, basePlayback + speedBoost))
+
       video.playbackRate = playbackRate
 
       const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
@@ -197,6 +286,49 @@ export default function OutputPreview({
       }
     })
   }, [layers, bassLevel, spectrumLevels])
+
+  useEffect(() => {
+    let canceled = false
+
+    async function ensureReverseClips() {
+      const currentLayers = latestLayersRef.current || []
+
+      for (const layer of currentLayers) {
+        const active =
+          typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
+        const filePath = active?.filePath
+        const bounceEnabled = Boolean(layer.videoMotion?.bounceEnabled)
+        if (!bounceEnabled || !filePath) {
+          continue
+        }
+
+        const requestKey = getBounceClipKey(filePath)
+        if (reverseClipPathRef.current[requestKey] || reverseClipRequestRef.current[requestKey]) {
+          continue
+        }
+
+        reverseClipRequestRef.current[requestKey] = true
+        try {
+          const reversedPath = await window.scalezApi?.ensureReverseCache?.(filePath)
+          if (!canceled && reversedPath) {
+            reverseClipPathRef.current[requestKey] = reversedPath
+            refreshBounceRender()
+          }
+        } catch (error) {
+          if (import.meta.env.DEV) {
+            console.warn(`[bounce:reverse-cache] failed file=${filePath} message=${error?.message || 'n/a'}`)
+          }
+        } finally {
+          delete reverseClipRequestRef.current[requestKey]
+        }
+      }
+    }
+
+    void ensureReverseClips()
+    return () => {
+      canceled = true
+    }
+  }, [layers])
 
   // Cleanup unused video elements (long-session safety)
   useEffect(() => {
@@ -275,16 +407,65 @@ export default function OutputPreview({
   }, [layers, enablePreload])
 
   // Handle video errors
-  const handleVideoError = (layerIndex, slotIndex, filePath, errorEvent) => {
-    const key = `${layerIndex}-${slotIndex}`
+  const handleVideoError = (layerIndex, slotIndex, filePath, sourcePath, errorEvent) => {
+    // Ignore errors from stale/unmounted elements (e.g. bounce source-swap teardown).
+    // When React replaces the video element due to a key change, the old element can
+    // fire MEDIA_ERR_SRC_NOT_SUPPORTED as its src is cleared — that is not a real failure.
+    const activeEl = videoRefsRef.current[layerIndex]
+    if (errorEvent?.currentTarget !== activeEl) {
+      return
+    }
+
+    const key = getVideoErrorKey(layerIndex, slotIndex, sourcePath || filePath)
     const mediaError = errorEvent?.currentTarget?.error || errorEvent?.target?.error || null
     const { code, reason } = getMediaErrorDetails(mediaError)
-    const classification = classifyVideoFailure({ code, reason, filePath })
+    const classification = classifyVideoFailure({ code, reason, filePath: sourcePath || filePath })
+
+    // If the reverse companion clip fails to decode, do not kill the original slot.
+    // Fallback to forward-only playback and stop retrying this broken reverse cache.
+    if (sourcePath && filePath && sourcePath !== filePath) {
+      const requestKey = getBounceClipKey(filePath)
+      delete reverseClipPathRef.current[requestKey]
+      bouncePhaseRef.current[layerIndex] = 'forward'
+
+      const rebuildAttempts = reverseClipRebuildAttemptsRef.current[requestKey] || 0
+      if (rebuildAttempts < 1 && !reverseClipRequestRef.current[requestKey]) {
+        reverseClipRebuildAttemptsRef.current[requestKey] = rebuildAttempts + 1
+        reverseClipRequestRef.current[requestKey] = true
+        window.scalezApi
+          ?.rebuildReverseCache?.(filePath)
+          .then((rebuiltPath) => {
+            if (rebuiltPath) {
+              reverseClipPathRef.current[requestKey] = rebuiltPath
+            }
+          })
+          .catch((error) => {
+            if (import.meta.env.DEV) {
+              console.warn(
+                `[bounce:reverse-rebuild] failed file=${filePath} message=${error?.message || 'n/a'}`,
+              )
+            }
+          })
+          .finally(() => {
+            delete reverseClipRequestRef.current[requestKey]
+            refreshBounceRender()
+          })
+      }
+
+      refreshBounceRender()
+      if (import.meta.env.DEV && !videoErrorLogRef.current[`reverse-failed-${key}-${code}-${reason}`]) {
+        videoErrorLogRef.current[`reverse-failed-${key}-${code}-${reason}`] = true
+        console.warn(
+          `[bounce:reverse-failed] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason} src=${sourcePath}`,
+        )
+      }
+      return
+    }
 
     if (import.meta.env.DEV && !videoErrorLogRef.current[`${key}-${code}-${reason}`]) {
       videoErrorLogRef.current[`${key}-${code}-${reason}`] = true
       console.error(
-        `[video:error] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason} path=${filePath || 'n/a'}`,
+        `[video:error] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason} path=${sourcePath || filePath || 'n/a'}`,
       )
     }
 
@@ -311,11 +492,12 @@ export default function OutputPreview({
     }
   }
 
-  const handleVideoCanPlay = (layerIndex, slotIndex, filePath, event) => {
-    const key = `${layerIndex}-${slotIndex}-${filePath}`
+  const handleVideoCanPlay = (layerIndex, slotIndex, filePath, sourcePath, isBounceEnabled, event) => {
+    const effectivePath = sourcePath || filePath
+    const key = `${layerIndex}-${slotIndex}-${effectivePath}`
     if (import.meta.env.DEV && !canPlayLogRef.current[key]) {
       canPlayLogRef.current[key] = true
-      console.info(`[video:canplay] layer=${layerIndex + 1} slot=${slotIndex + 1} path=${filePath}`)
+      console.info(`[video:canplay] layer=${layerIndex + 1} slot=${slotIndex + 1} path=${effectivePath}`)
     }
 
     if (playAttemptRef.current[key]) {
@@ -323,14 +505,36 @@ export default function OutputPreview({
     }
     playAttemptRef.current[key] = true
 
+    // Bounce mode intentionally pauses and seeks manually, so forcing play()
+    // here can create AbortError races during transitions.
+    if (isBounceEnabled) {
+      const video = event.currentTarget
+      const layer = latestLayersRef.current?.[layerIndex]
+      const phase = bouncePhaseRef.current[layerIndex] || 'forward'
+      const bounds = getBounceSegmentBounds(video, layer?.videoMotion || {}, phase)
+      if (bounds) {
+        seekVideoEfficient(video, bounds.start)
+      }
+      setVideoErrors((prev) => {
+        const next = { ...prev }
+        delete next[getVideoErrorKey(layerIndex, slotIndex, effectivePath)]
+        delete next[getVideoErrorKey(layerIndex, slotIndex, filePath)]
+        return next
+      })
+      return
+    }
+
     const playPromise = event.currentTarget?.paused ? event.currentTarget?.play?.() : null
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch((playError) => {
+        if (playError?.name === 'AbortError') {
+          return
+        }
         const classification = classifyVideoFailure({
           code: 3,
           reason: playError?.message || 'play() rejected',
           playError,
-          filePath,
+          filePath: effectivePath,
         })
         if (import.meta.env.DEV && !playRejectLogRef.current[key]) {
           playRejectLogRef.current[key] = true
@@ -338,11 +542,63 @@ export default function OutputPreview({
             `[video:play-reject] layer=${layerIndex + 1} slot=${slotIndex + 1} name=${playError?.name || 'Error'} message=${playError?.message || 'n/a'}`,
           )
         }
-        setVideoErrors((prev) => ({ ...prev, [`${layerIndex}-${slotIndex}`]: true }))
+        setVideoErrors((prev) => ({ ...prev, [getVideoErrorKey(layerIndex, slotIndex, effectivePath)]: true }))
         if (markSlotFailed) {
           markSlotFailed(layerIndex, slotIndex, classification.message, classification.type)
         }
       })
+    }
+  }
+
+  const handleVideoTimeUpdate = (layerIndex, slotIndex, filePath, motion, event) => {
+    const video = event.currentTarget
+    const segment = getSegmentBounds(video, motion || {})
+    if (!segment) {
+      return
+    }
+
+    const bounceEnabled = Boolean(motion?.bounceEnabled)
+    const timelineDriven = (motion?.timelineAmount ?? 0) > 0
+    if (bounceEnabled) {
+      const bouncePhase = bouncePhaseRef.current[layerIndex] || 'forward'
+      const reversePath = reverseClipPathRef.current[getBounceClipKey(filePath)]
+      const reverseSegment = getBounceSegmentBounds(video, motion || {}, 'reverse')
+      if (bouncePhase === 'forward' && video.currentTime >= segment.end) {
+        if (!reversePath) {
+          video.currentTime = segment.start
+          if (video.paused) {
+            const playPromise = video.play?.()
+            if (playPromise && typeof playPromise.catch === 'function') {
+              playPromise.catch(() => {
+                // Ignore play races while reverse media is still preparing.
+              })
+            }
+          }
+          return
+        }
+        bouncePhaseRef.current[layerIndex] = 'reverse'
+        refreshBounceRender()
+      } else if (bouncePhase === 'reverse' && reverseSegment && video.currentTime >= reverseSegment.end) {
+        bouncePhaseRef.current[layerIndex] = 'forward'
+        refreshBounceRender()
+      }
+      return
+    }
+
+    if (timelineDriven) {
+      return
+    }
+
+    if (video.currentTime < segment.start || video.currentTime >= segment.end) {
+      video.currentTime = segment.start
+      if (video.paused) {
+        const playPromise = video.play?.()
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {
+            // Ignore play races caused by segment rewinds.
+          })
+        }
+      }
     }
   }
 
@@ -351,21 +607,21 @@ export default function OutputPreview({
     0,
   )
 
-  const glowStrength = masterFx.glow + bassLevel * 0.2
-  const strobeOpacity = blackout ? 0 : Math.min(0.8, masterFx.strobe * 0.85)
+  const glowStrength = Math.min(1, masterFx.glow + bassLevel * 0.1)
+  const strobeOpacity = blackout ? 0 : Math.min(0.52, Math.pow(masterFx.strobe, 1.35) * 0.58)
   const strobeActive = strobeOpacity > 0.01
 
   return (
     <section className="output-preview-wrap">
       <div
-        className={`output-preview ${masterFx.shake > 0 ? 'fx-shake' : ''}`}
+        className={`output-preview ${masterFx.shake > 0.08 ? 'fx-shake' : ''}`}
         role="img"
         aria-label="Live output preview"
         style={{
           filter: `brightness(${masterFx.brightness})`,
-          '--shake-px': `${(masterFx.shake * 12).toFixed(2)}px`,
-          '--glow-px': `${(12 + glowStrength * 60).toFixed(2)}px`,
-          '--glow-alpha': (0.14 + glowStrength * 0.4).toFixed(3),
+          '--shake-px': `${(masterFx.shake * 5.5).toFixed(2)}px`,
+          '--glow-px': `${(8 + glowStrength * 30).toFixed(2)}px`,
+          '--glow-alpha': (0.1 + glowStrength * 0.2).toFixed(3),
         }}
       >
         <div className="preview-backdrop" />
@@ -378,7 +634,7 @@ export default function OutputPreview({
             active &&
             active.status === 'loaded' &&
             Boolean(active.filePath) &&
-            !videoErrors[`${layer.layerIndex}-${active.slotIndex}`]
+            !videoErrors[getVideoErrorKey(layer.layerIndex, active.slotIndex, active.filePath)]
 
           if (!canRenderVideo) {
             return (
@@ -393,32 +649,54 @@ export default function OutputPreview({
             )
           }
 
-          const videoKey = `video-${layer.label}-${active.filePath}`
-          const src = toFileUrl(active.filePath)
+          const bounceEnabled = Boolean(layer.videoMotion?.bounceEnabled)
+          const bouncePhase = bouncePhaseRef.current[layer.layerIndex] || 'forward'
+          const reversePath = reverseClipPathRef.current[getBounceClipKey(active.filePath)]
+          const effectivePath = bounceEnabled && bouncePhase === 'reverse' && reversePath
+            ? reversePath
+            : active.filePath
+          const videoKey = `video-${layer.label}-${effectivePath}-${bouncePhase}`
+          const src = toFileUrl(effectivePath)
           if (import.meta.env.DEV && !srcLogRef.current[videoKey]) {
             srcLogRef.current[videoKey] = true
             console.info(
-              `[video:src] active layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} path=${active.filePath} src=${src}`,
+              `[video:src] active layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} path=${effectivePath} src=${src}`,
             )
           }
           return (
             <video
               key={videoKey}
               ref={(el) => {
-                if (el) videoRefsRef.current[layer.layerIndex] = el
+                videoRefsRef.current[layer.layerIndex] = el
               }}
               className="preview-layer-video"
               src={src}
               autoPlay
-              loop
+              loop={!Boolean(layer.videoMotion?.bounceEnabled)}
               muted
               playsInline
               preload="auto"
               onCanPlay={(event) =>
-                handleVideoCanPlay(layer.layerIndex, active.slotIndex, active.filePath, event)
+                handleVideoCanPlay(
+                  layer.layerIndex,
+                  active.slotIndex,
+                  active.filePath,
+                  effectivePath,
+                  Boolean(layer.videoMotion?.bounceEnabled),
+                  event,
+                )
+              }
+              onTimeUpdate={(event) =>
+                handleVideoTimeUpdate(
+                  layer.layerIndex,
+                  active.slotIndex,
+                  active.filePath,
+                  layer.videoMotion,
+                  event,
+                )
               }
               onError={(event) =>
-                handleVideoError(layer.layerIndex, active.slotIndex, active.filePath, event)
+                handleVideoError(layer.layerIndex, active.slotIndex, active.filePath, effectivePath, event)
               }
               style={{
                 opacity: layer.opacity,
@@ -452,7 +730,14 @@ export default function OutputPreview({
               <div className={`overlay-chip sync-status sync-${syncStatus}`}>{syncStatus}</div>
             </div>
             <div className="overlay-row">
-              <AudioMeter bassLevel={bassLevel} />
+              <AudioMeter
+                bassLevel={bassLevel}
+                spectrumLevels={spectrumLevels}
+                spectrumBins={spectrumBins}
+                showControls={false}
+                showSettings={false}
+                showSpectrumBins={false}
+              />
               <div className="overlay-stack">
                 {layers
                   .slice()

@@ -133,16 +133,23 @@ body {
 }
 
 .fx-glow-layer {
-  box-shadow: inset 0 0 var(--glow-px) rgba(74, 180, 255, var(--glow-alpha));
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(74, 180, 255, calc(var(--glow-alpha) * 0.9)) 0%,
+    rgba(74, 180, 255, calc(var(--glow-alpha) * 0.45)) 34%,
+    rgba(74, 180, 255, 0) 72%
+  );
+  mix-blend-mode: screen;
 }
 
 .fx-strobe-layer {
   background: rgba(255, 255, 255, 0.95);
   mix-blend-mode: screen;
+  will-change: opacity;
 }
 
 .fx-strobe-layer.is-on {
-  animation: strobe-flash 140ms steps(2, end) infinite;
+  animation: strobe-flash 220ms steps(2, end) infinite;
 }
 
 .fx-blackout-layer {
@@ -183,8 +190,6 @@ body {
   color: #d8e3ff;
   padding: 6px 10px;
   font-size: 0.78rem;
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
 }
 
 .overlay-stack {
@@ -762,7 +767,7 @@ body {
     opacity: 0;
   }
   45% {
-    opacity: 1;
+    opacity: 0.78;
   }
   100% {
     opacity: 0;
@@ -863,6 +868,43 @@ body {
   gap: 4px;
 }
 
+.audio-spectrum-full {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(74, 180, 255, 0.22);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(7, 13, 31, 0.6), rgba(10, 18, 42, 0.35));
+}
+
+.audio-spectrum-full__bars {
+  height: 84px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(2px, 1fr);
+  align-items: end;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(84, 192, 255, 0.08), rgba(84, 192, 255, 0.02)),
+    repeating-linear-gradient(
+      to top,
+      rgba(127, 154, 219, 0.08) 0,
+      rgba(127, 154, 219, 0.08) 1px,
+      transparent 1px,
+      transparent 16px
+    );
+}
+
+.audio-spectrum-full__bar {
+  width: 100%;
+  min-height: 4px;
+  border-radius: 2px 2px 0 0;
+  background: linear-gradient(180deg, rgba(126, 251, 181, 0.98), rgba(74, 180, 255, 0.95));
+  box-shadow: 0 0 6px rgba(74, 180, 255, 0.35);
+}
+
 .audio-link-panel {
   display: grid;
   gap: 8px;
@@ -917,6 +959,28 @@ body {
 .audio-reactivity-block select,
 .video-motion-block select {
   width: 100%;
+}
+
+.bounce-rebuild-btn {
+  border: 1px solid rgba(84, 192, 255, 0.45);
+  border-radius: 7px;
+  background: rgba(74, 180, 255, 0.12);
+  color: #dce5ff;
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 7px 8px;
+}
+
+.bounce-rebuild-btn:hover:not(:disabled) {
+  border-color: rgba(84, 192, 255, 0.75);
+  box-shadow: 0 0 12px rgba(84, 192, 255, 0.3);
+}
+
+.bounce-rebuild-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .collapse-toggle {

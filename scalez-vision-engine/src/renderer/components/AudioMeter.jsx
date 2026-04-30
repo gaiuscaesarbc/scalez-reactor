@@ -1,6 +1,7 @@
 export default function AudioMeter({
   bassLevel,
   spectrumLevels,
+  spectrumBins,
   isAudioActive,
   permissionDenied,
   audioError,
@@ -10,7 +11,14 @@ export default function AudioMeter({
   onStopAudio,
   onSensitivityChange,
   onSmoothingChange,
+  showControls = true,
+  showSettings = true,
+  showSpectrumBins = true,
 }) {
+  const hasControlHandlers = Boolean(onStartAudio) && Boolean(onStopAudio)
+  const canShowControls = showControls && hasControlHandlers
+  const canShowSettings = showSettings && canShowControls
+
   return (
     <div className="audio-meter-panel">
       <div className="audio-meter">
@@ -21,21 +29,23 @@ export default function AudioMeter({
         <div className="audio-meter__value">{bassLevel.toFixed(2)}</div>
       </div>
 
-      <div className="audio-controls">
-        {audioError && (
-          <div className="audio-error">
-            {audioError}
-            {permissionDenied ? ' (Check microphone privacy permissions.)' : ''}
-          </div>
-        )}
-        <button
-          type="button"
-          className={`audio-btn ${isAudioActive ? 'is-active' : ''}`}
-          onClick={isAudioActive ? onStopAudio : onStartAudio}
-        >
-          {isAudioActive ? 'Stop' : 'Start'} Input
-        </button>
-      </div>
+      {canShowControls && (
+        <div className="audio-controls">
+          {audioError && (
+            <div className="audio-error">
+              {audioError}
+              {permissionDenied ? ' (Check microphone privacy permissions.)' : ''}
+            </div>
+          )}
+          <button
+            type="button"
+            className={`audio-btn ${isAudioActive ? 'is-active' : ''}`}
+            onClick={isAudioActive ? onStopAudio : onStartAudio}
+          >
+            {isAudioActive ? 'Stop' : 'Start'} Input
+          </button>
+        </div>
+      )}
 
       <div className="audio-spectrum-grid">
         {[
@@ -57,15 +67,33 @@ export default function AudioMeter({
         })}
       </div>
 
-      {isAudioActive && sensitivity !== undefined && smoothing !== undefined ? (
+      {showSpectrumBins ? (
+        <div className="audio-spectrum-full">
+          <div className="audio-meter__label">FULL SPECTRUM</div>
+          <div className="audio-spectrum-full__bars" role="img" aria-label="Live audio frequency spectrum">
+            {(spectrumBins || []).map((value, index) => {
+              const height = Math.max(4, Math.round(Math.min(1, Math.max(0, Number(value) || 0)) * 100))
+              return (
+                <div
+                  key={`bin-${index}`}
+                  className="audio-spectrum-full__bar"
+                  style={{ height: `${height}%` }}
+                />
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {canShowSettings && isAudioActive && sensitivity !== undefined && smoothing !== undefined ? (
         <div className="audio-settings">
           <label className="audio-setting">
             <span>Sensitivity</span>
             <input
               type="range"
-              min="0.5"
-              max="2"
-              step="0.1"
+              min="0.3"
+              max="1.5"
+              step="0.05"
               value={sensitivity}
               onChange={(e) => onSensitivityChange?.(Number(e.target.value))}
             />
@@ -74,8 +102,8 @@ export default function AudioMeter({
             <span>Smoothing</span>
             <input
               type="range"
-              min="0.7"
-              max="0.95"
+              min="0.2"
+              max="0.9"
               step="0.01"
               value={smoothing}
               onChange={(e) => onSmoothingChange?.(Number(e.target.value))}

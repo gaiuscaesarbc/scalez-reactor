@@ -77,6 +77,7 @@ export default function MasterFxPanel({
             <AudioMeter
               bassLevel={audioPanel.bassLevel}
               spectrumLevels={audioPanel.spectrumLevels}
+              spectrumBins={audioPanel.spectrumBins}
               isAudioActive={audioPanel.isActive}
               permissionDenied={audioPanel.permissionDenied}
               audioError={audioPanel.audioError}

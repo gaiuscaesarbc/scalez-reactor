@@ -1,5 +1,7 @@
 const path = require('node:path')
 const fs = require('node:fs')
+const crypto = require('node:crypto')
+const { spawn } = require('node:child_process')
 const { pathToFileURL } = require('node:url')
 const { app, BrowserWindow, ipcMain, protocol, net, session } = require('electron')
 const { dialog } = require('electron')
@@ -19,9 +21,11 @@ protocol.registerSchemesAsPrivileged([
 
 const isDev = !app.isPackaged
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
+const openDevtoolsByDefault = process.env.SCALEZ_OPEN_DEVTOOLS === '1'
 
 let controlWindow = null
 let outputWindow = null
+let reverseCacheDir = null
 let sharedOutputState = {
   layers: [],
   masterFx: {
@@ -41,10 +45,147 @@ function getPreloadPath() {
   return path.join(__dirname, 'preload.cjs')
 }
 
+function getReverseCacheDir() {
+  if (!reverseCacheDir) {
+    reverseCacheDir = path.join(app.getPath('userData'), 'reverse-cache')
+    fs.mkdirSync(reverseCacheDir, { recursive: true })
+  }
+  return reverseCacheDir
+}
+
+function getFfmpegExecutablePath() {
+  const localAppData = process.env.LOCALAPPDATA || ''
+  const wingetPackagesDir = path.join(localAppData, 'Microsoft', 'WinGet', 'Packages')
+  if (!fs.existsSync(wingetPackagesDir)) {
+    return null
+  }
+
+  const packageDir = fs
+    .readdirSync(wingetPackagesDir, { withFileTypes: true })
+    .find((entry) => entry.isDirectory() && entry.name.startsWith('Gyan.FFmpeg_'))
+
+  if (!packageDir) {
+    return null
+  }
+
+  const packageRoot = path.join(wingetPackagesDir, packageDir.name)
+  const buildDir = fs
+    .readdirSync(packageRoot, { withFileTypes: true })
+    .find((entry) => entry.isDirectory() && entry.name.startsWith('ffmpeg-'))
+
+  if (!buildDir) {
+    return null
+  }
+
+  const ffmpegPath = path.join(packageRoot, buildDir.name, 'bin', 'ffmpeg.exe')
+  return fs.existsSync(ffmpegPath) ? ffmpegPath : null
+}
+
+function ensureReverseCache(filePath, options = {}) {
+  return new Promise((resolve, reject) => {
+    if (!filePath || !fs.existsSync(filePath)) {
+      reject(new Error('Source clip does not exist.'))
+      return
+    }
+
+    const ffmpegPath = getFfmpegExecutablePath()
+    if (!ffmpegPath) {
+      reject(new Error('FFmpeg is not available on this machine.'))
+      return
+    }
+
+    const fileStats = fs.statSync(filePath)
+    const cacheKey = crypto
+      .createHash('sha1')
+      .update(`${filePath}:${fileStats.size}:${fileStats.mtimeMs}`)
+      .digest('hex')
+    const outputPath = path.join(getReverseCacheDir(), `${cacheKey}.mp4`)
+    const forceRebuild = Boolean(options.forceRebuild)
+
+    if (forceRebuild && fs.existsSync(outputPath)) {
+      try {
+        fs.unlinkSync(outputPath)
+      } catch {
+        // Ignore stale cache delete failures and continue to rebuild.
+      }
+    }
+
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size <= 0) {
+      try {
+        fs.unlinkSync(outputPath)
+      } catch {
+        // Ignore stale cache delete failures and continue to rebuild.
+      }
+    }
+
+    if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
+      resolve(outputPath)
+      return
+    }
+
+    const tempOutputPath = `${outputPath}.tmp-${Date.now()}-${process.pid}.mp4`
+
+    const ffmpegArgs = [
+      '-y',
+      '-i',
+      filePath,
+      '-an',
+      '-vf',
+      'reverse',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '20',
+      '-pix_fmt',
+      'yuv420p',
+      tempOutputPath,
+    ]
+
+    const child = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true })
+    let stderr = ''
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+
+    child.on('error', (error) => {
+      reject(error)
+    })
+
+    child.on('close', (code) => {
+      if (code === 0 && fs.existsSync(tempOutputPath) && fs.statSync(tempOutputPath).size > 0) {
+        try {
+          if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath)
+          }
+          fs.renameSync(tempOutputPath, outputPath)
+        } catch (error) {
+          reject(error)
+          return
+        }
+        resolve(outputPath)
+        return
+      }
+      if (fs.existsSync(tempOutputPath)) {
+        try {
+          fs.unlinkSync(tempOutputPath)
+        } catch {
+          // Ignore temp cleanup errors.
+        }
+      }
+      reject(new Error(stderr || `ffmpeg exited with code ${code}`))
+    })
+  })
+}
+
 function loadRendererWindow(windowRef, mode) {
   if (isDev) {
     windowRef.loadURL(`${devServerUrl}?window=${mode}`)
-    windowRef.webContents.openDevTools({ mode: 'detach' })
+    if (openDevtoolsByDefault) {
+      windowRef.webContents.openDevTools({ mode: 'detach' })
+    }
     return
   }
 
@@ -92,6 +233,7 @@ function createOutputWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: false,
     },
   })
 
@@ -129,6 +271,13 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('app:get-platform', () => process.platform)
+
+  ipcMain.handle('app:open-devtools', (_event) => {
+    const win = BrowserWindow.fromWebContents(_event.sender)
+    if (win) {
+      win.webContents.openDevTools({ mode: 'detach' })
+    }
+  })
 
   ipcMain.handle('clips:pick-video', async () => {
     const windowRef = BrowserWindow.getFocusedWindow() || controlWindow
@@ -171,6 +320,14 @@ function registerIpcHandlers() {
       return false
     }
     return fs.existsSync(targetPath)
+  })
+
+  ipcMain.handle('clips:ensure-reverse-cache', async (_event, targetPath) => {
+    return ensureReverseCache(targetPath)
+  })
+
+  ipcMain.handle('clips:rebuild-reverse-cache', async (_event, targetPath) => {
+    return ensureReverseCache(targetPath, { forceRebuild: true })
   })
 
   ipcMain.on('output:state-publish', (_event, nextState) => {

@@ -467,7 +467,60 @@ export function useClipStore() {
 
   const visibleLayers = useMemo(() => layers.filter((layer) => layer.visible), [layers])
 
-  const saveShow = (showName, midiMappings_) => {
+  const revalidateImportedSlots = async (showLayers) => {
+    if (!Array.isArray(showLayers)) {
+      return
+    }
+
+    for (const showLayer of showLayers) {
+      const layerIndex = layers.find((layer) => layer.label === showLayer.label)?.layerIndex
+      if (typeof layerIndex !== 'number') {
+        continue
+      }
+
+      const slots = Array.isArray(showLayer.slots) ? showLayer.slots : []
+      for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) {
+        const slot = slots[slotIndex]
+        if (!slot?.filePath) {
+          continue
+        }
+
+        const probeKey = `${layerIndex}-${slotIndex}`
+        const nextVersion = (slotProbeVersionRef.current[probeKey] || 0) + 1
+        slotProbeVersionRef.current[probeKey] = nextVersion
+
+        const exists = await window.scalezApi?.pathExists?.(slot.filePath)
+        if (slotProbeVersionRef.current[probeKey] !== nextVersion) {
+          continue
+        }
+        if (exists === false) {
+          markSlotMissing(layerIndex, slotIndex, true)
+          continue
+        }
+
+        if (slot.status !== 'loaded') {
+          continue
+        }
+
+        const probeResult = await probeVideoPlayable(slot.filePath)
+        if (slotProbeVersionRef.current[probeKey] !== nextVersion) {
+          continue
+        }
+        if (!probeResult.ok) {
+          const extension = getFileExtension(slot.filePath)
+          const issueType = classifyVideoIssue({ extension, errorCode: probeResult.errorCode })
+          const hint =
+            issueType === 'unsupported'
+              ? 'Unsupported format/codec. Prefer MP4 (H.264) or WebM (VP8/VP9).'
+              : 'Video failed to reload. Check file path and permissions.'
+          const message = `${hint} ${probeResult.message || ''}`.trim()
+          markSlotFailed(layerIndex, slotIndex, message, issueType)
+        }
+      }
+    }
+  }
+
+  const saveShow = (showName, midiMappings_, appSettings) => {
     const showData = {
       name: showName,
       timestamp: new Date().toISOString(),
@@ -483,6 +536,7 @@ export function useClipStore() {
         })),
       })),
       midiMappings: midiMappings_ || midiMappings || {},
+      appSettings: appSettings || null,
     }
     const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
     const existingIdx = shows.findIndex((s) => s.name === showName)
@@ -496,7 +550,7 @@ export function useClipStore() {
     return showData
   }
 
-  const autosaveShow = (midiMappings_) => {
+  const autosaveShow = (midiMappings_, appSettings) => {
     const autosaveName = '__autosave__'
     const showData = {
       name: autosaveName,
@@ -513,6 +567,7 @@ export function useClipStore() {
         })),
       })),
       midiMappings: midiMappings_ || midiMappings || {},
+      appSettings: appSettings || null,
     }
     localStorage.setItem('scalez_autosave', JSON.stringify(showData))
   }
@@ -556,12 +611,13 @@ export function useClipStore() {
         if (showData.midiMappings) {
           setMidiMappings(showData.midiMappings)
         }
-        return true
+        void revalidateImportedSlots(showData.layers)
+        return { ok: true, appSettings: showData.appSettings || null }
       } catch (e) {
-        return false
+        return { ok: false, appSettings: null }
       }
     }
-    return false
+    return { ok: false, appSettings: null }
   }
 
   const loadShow = (showName) => {
@@ -601,7 +657,8 @@ export function useClipStore() {
     } else {
       setMidiMappings({})
     }
-    return true
+    void revalidateImportedSlots(show.layers)
+    return { ok: true, appSettings: show.appSettings || null }
   }
 
   const getSavedShows = () => {
