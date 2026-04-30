@@ -1,27 +1,122 @@
 # SCALEZ Vision Engine
 
-Desktop workspace scaffolded for Electron + React + Vite (JavaScript) with a split architecture:
+A live-performance VJ application built with Electron + React + Vite. Features multi-layer video playback with forward/reverse bounce, full audio reactivity, MIDI control, show save/load, and a full-spectrum EQ visualizer.
 
-- Electron process code in src/main
-- React renderer code in src/renderer
+---
 
-## Scripts
+## Requirements
 
-- npm run dev: starts Vite and Electron together
-- npm run build: builds the renderer into dist
-- npm run preview: previews the renderer build
-- npm run electron: launches Electron directly
+| Tool | Version |
+|---|---|
+| Node.js | 18 or later |
+| npm | 9 or later |
+| Windows | 10 or 11 (64-bit) |
+| FFmpeg | Required for bounce reverse playback |
 
-## Structure
+---
 
+## Setup
+
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/GaiusCaesarBC/Scalez-Reactor.git
+cd Scalez-Reactor/scalez-vision-engine
+```
+
+### 2. Install dependencies
+
+```bash
+npm install
+```
+
+### 3. Install FFmpeg (required for bounce playback)
+
+FFmpeg is used to pre-render reversed clip files for the bounce feature.
+
+**Recommended — WinGet (Windows 10/11):**
+
+```powershell
+winget install --id Gyan.FFmpeg --exact --accept-package-agreements --accept-source-agreements
+```
+
+After install, restart your terminal. The app auto-detects the WinGet-installed FFmpeg at runtime — no manual PATH setup required.
+
+**Alternative — Manual:**
+
+Download a full build from [ffmpeg.org/download.html](https://ffmpeg.org/download.html) and extract it anywhere. The app will fall back to PATH resolution if the WinGet package is not found.
+
+---
+
+## Running in Development
+
+```bash
+npm run dev
+```
+
+This starts the Vite dev server and launches Electron concurrently. Two windows open:
+- **Control Window** — full UI, layers, audio panel, FX
+- **Output Window** — clean full-screen video output (for OBS capture or projector)
+
+---
+
+## Building
+
+```bash
+npm run build
+```
+
+Outputs the compiled renderer to `dist/`. Run Electron against the build with:
+
+```bash
+npm run electron
+```
+
+---
+
+## Project Structure
+
+```
 src/
-- main/
-	- main.cjs
-	- preload.cjs
-- renderer/
-	- main.jsx
-	- App.jsx
-	- styles.css
+  main/
+    main.cjs          Electron main process, IPC, FFmpeg integration
+    preload.cjs       Secure context bridge to renderer
+  renderer/
+    App.jsx           Control shell, audio reactivity, MIDI command dispatch
+    styles.css        Full UI theme
+    components/
+      OutputPreview   Video playback surface, bounce logic, FX overlays
+      LayerStrip      Per-layer controls, audio link, video motion, bounce
+      MasterFxPanel   Master FX sliders, audio panel, EQ
+      AudioMeter      Live level meters + full-spectrum EQ visualizer
+      MidiPanel       MIDI device selection and learn mode
+      ShowManager     Save / load named shows
+      ClipSlot        Individual clip slot UI
+    hooks/
+      useClipStore    Layer + slot state, show persistence
+      useAudioAnalysis  Mic analysis, FFT spectrum, smoothing
+      useMidiController  Web MIDI access, learn, auto-reconnect
+      useFps          FPS readout with EMA smoothing
+      useTapTempo     BPM tap tempo
+      useOutputSync   IPC state bridge to output window
+      useSessionTimer Session clock
+```
+
+---
+
+## Key Features
+
+- **Multi-layer video** — 3 layers, 50 slots each, instant trigger
+- **Bounce playback** — FFmpeg-rendered reverse companion clips for true fwd/rev looping
+- **Audio reactivity** — Mic input drives glow, strobe, shake, brightness, and per-layer opacity
+- **Full-spectrum EQ display** — Live bar graph across all FFT bins
+- **MIDI control** — Learn mode, auto-reconnect, mappings for all major actions
+- **Show save/load** — Persists clips, MIDI mappings, all audio settings, FX, video motion
+- **Cue mode** — Stage clips before launching live
+- **Safe mode** — Caps strobe/shake for seizure safety
+- **OBS-ready output** — Output window is a clean capture target with no UI chrome
+
+---
 
 ## Notes for Windows
 
