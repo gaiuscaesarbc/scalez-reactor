@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { blendModeToCss } from '../utils/blendModes'
 import AudioMeter from './AudioMeter'
 
@@ -139,6 +139,50 @@ function getBounceClipKey(filePath) {
   return filePath || '__empty__'
 }
 
+function tryResumeVideo(video) {
+  if (!video || !video.paused) {
+    return
+  }
+  const playPromise = video.play?.()
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(() => {
+      // Ignore play races while source/seek is being updated.
+    })
+  }
+}
+
+const BOUNCE_FORWARD_RETRY_LIMIT = 3
+const BOUNCE_REVERSE_COOLDOWN_MS = 30000
+const BOUNCE_FORWARD_RETRY_RESET_MS = 15000
+
+function isMediaDebugEnabled() {
+  if (!import.meta.env.DEV) {
+    return false
+  }
+  try {
+    return window.localStorage?.getItem('scalez-debug-media') === '1'
+  } catch {
+    return false
+  }
+}
+
+function isBenignSourceResetError(event) {
+  const video = event?.currentTarget
+  if (!video || video.error?.code !== 4) {
+    return false
+  }
+
+  const hasNoSource = !video.currentSrc && !video.getAttribute('src')
+  const networkEmpty =
+    typeof HTMLMediaElement !== 'undefined'
+      ? video.networkState === HTMLMediaElement.NETWORK_EMPTY
+      : video.networkState === 0
+
+  return hasNoSource && networkEmpty
+}
+
+const MEDIA_DEBUG = isMediaDebugEnabled()
+
 export default function OutputPreview({
   layers,
   fps,
@@ -158,6 +202,8 @@ export default function OutputPreview({
   const [, setBounceRenderVersion] = useState(0)
   const playAttemptRef = useRef({})
   const playRejectLogRef = useRef({})
+  const successfulCanPlayRef = useRef({})
+  const bounceCanPlaySeekRef = useRef({})
 
   const refreshBounceRender = () => {
     setBounceRenderVersion((version) => version + 1)
@@ -187,11 +233,27 @@ export default function OutputPreview({
   const reverseClipPathRef = useRef({})
   const reverseClipRequestRef = useRef({})
   const reverseClipRebuildAttemptsRef = useRef({})
+  const forwardRecoverAttemptsRef = useRef({})
+  const forwardRecoverLastAtRef = useRef({})
+  const reverseCooldownUntilRef = useRef({})
+  const lastBounceEnabledRef = useRef({})
   const latestLayersRef = useRef(layers)
   const latestBassRef = useRef(bassLevel)
   const latestSpectrumRef = useRef(spectrumLevels)
   const [syncStatus, setSyncStatus] = useState('synced')
   const [videoErrors, setVideoErrors] = useState({})
+
+  const bounceClipRequestKey = useMemo(
+    () => layers
+      .map((layer) => {
+        const active = typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
+        const filePath = active?.filePath || ''
+        const enabled = Boolean(layer.videoMotion?.bounceEnabled)
+        return `${layer.layerIndex}:${enabled ? 1 : 0}:${filePath}`
+      })
+      .join('|'),
+    [layers],
+  )
 
   // Monitor sync status
   useEffect(() => {
@@ -222,12 +284,31 @@ export default function OutputPreview({
       const activeSlot = typeof layer.activeSlotIndex === 'number' ? layer.activeSlotIndex : -1
       const activeSlotObj = activeSlot >= 0 ? layer.slots?.[activeSlot] : null
       const clipKey = activeSlotObj?.filePath || `${layer.layerIndex}-none`
+      const bounceEnabled = Boolean(motion.bounceEnabled)
+      const prevBounceEnabled = Boolean(lastBounceEnabledRef.current[layer.layerIndex])
+      if (prevBounceEnabled !== bounceEnabled) {
+        // Reset phase tracking, but do not force a rewind on toggle.
+        bouncePhaseRef.current[layer.layerIndex] = 'forward'
+        lastBounceEnabledRef.current[layer.layerIndex] = bounceEnabled
+        Object.keys(bounceCanPlaySeekRef.current).forEach((key) => {
+          if (key.startsWith(`${layer.layerIndex}-`)) {
+            delete bounceCanPlaySeekRef.current[key]
+          }
+        })
+        tryResumeVideo(video)
+      }
 
       if (activeClipKeyRef.current[layer.layerIndex] !== clipKey) {
         activeClipKeyRef.current[layer.layerIndex] = clipKey
         timelineProgressRef.current[layer.layerIndex] = 0
         lastTimelineTriggerRef.current[layer.layerIndex] = false
         bouncePhaseRef.current[layer.layerIndex] = 'forward'
+        lastBounceEnabledRef.current[layer.layerIndex] = bounceEnabled
+        Object.keys(bounceCanPlaySeekRef.current).forEach((key) => {
+          if (key.startsWith(`${layer.layerIndex}-`)) {
+            delete bounceCanPlaySeekRef.current[key]
+          }
+        })
         video.currentTime = segmentStart
       }
 
@@ -242,10 +323,10 @@ export default function OutputPreview({
         motion.speedMode || 'normal',
         motion.speedAmount ?? 0,
       )
-      const bounceEnabled = Boolean(motion.bounceEnabled)
       if (bounceEnabled) {
         const bounceSpeed = Math.max(0.05, Math.min(4, (motion.bounceSpeed ?? 1) + speedBoost))
         video.playbackRate = bounceSpeed
+        tryResumeVideo(video)
         return
       }
 
@@ -284,12 +365,27 @@ export default function OutputPreview({
       } else {
         lastTimelineTriggerRef.current[layer.layerIndex] = false
       }
+
+      tryResumeVideo(video)
     })
   }, [layers, bassLevel, spectrumLevels])
 
   useEffect(() => {
-    let canceled = false
+    // Safety net: after any layer/motion change, keep active preview videos playing.
+    layers.forEach((layer) => {
+      const active = typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
+      if (!active?.filePath || active.status !== 'loaded') {
+        return
+      }
+      const video = videoRefsRef.current[layer.layerIndex]
+      if (!video) {
+        return
+      }
+      tryResumeVideo(video)
+    })
+  }, [layers])
 
+  useEffect(() => {
     async function ensureReverseClips() {
       const currentLayers = latestLayersRef.current || []
 
@@ -303,6 +399,11 @@ export default function OutputPreview({
         }
 
         const requestKey = getBounceClipKey(filePath)
+        const reverseCooldownUntil = reverseCooldownUntilRef.current[requestKey] || 0
+        if (Date.now() < reverseCooldownUntil) {
+          continue
+        }
+
         if (reverseClipPathRef.current[requestKey] || reverseClipRequestRef.current[requestKey]) {
           continue
         }
@@ -310,12 +411,12 @@ export default function OutputPreview({
         reverseClipRequestRef.current[requestKey] = true
         try {
           const reversedPath = await window.scalezApi?.ensureReverseCache?.(filePath)
-          if (!canceled && reversedPath) {
+          if (reversedPath) {
             reverseClipPathRef.current[requestKey] = reversedPath
             refreshBounceRender()
           }
         } catch (error) {
-          if (import.meta.env.DEV) {
+          if (MEDIA_DEBUG) {
             console.warn(`[bounce:reverse-cache] failed file=${filePath} message=${error?.message || 'n/a'}`)
           }
         } finally {
@@ -325,10 +426,7 @@ export default function OutputPreview({
     }
 
     void ensureReverseClips()
-    return () => {
-      canceled = true
-    }
-  }, [layers])
+  }, [bounceClipRequestKey])
 
   // Cleanup unused video elements (long-session safety)
   useEffect(() => {
@@ -396,7 +494,7 @@ export default function OutputPreview({
           video.src = src
           video.preload = 'auto'
           video.muted = true
-          if (import.meta.env.DEV && !srcLogRef.current[`preload-${key}-${src}`]) {
+          if (MEDIA_DEBUG && !srcLogRef.current[`preload-${key}-${src}`]) {
             srcLogRef.current[`preload-${key}-${src}`] = true
             console.info(`[video:src] preload layer=${layerIndex + 1} slot=${slotIndex + 1} src=${src}`)
           }
@@ -416,10 +514,24 @@ export default function OutputPreview({
       return
     }
 
+    if (isBenignSourceResetError(errorEvent)) {
+      return
+    }
+
     const key = getVideoErrorKey(layerIndex, slotIndex, sourcePath || filePath)
     const mediaError = errorEvent?.currentTarget?.error || errorEvent?.target?.error || null
     const { code, reason } = getMediaErrorDetails(mediaError)
     const classification = classifyVideoFailure({ code, reason, filePath: sourcePath || filePath })
+    const activeLayer = latestLayersRef.current?.[layerIndex]
+    const activeSlotIndex = typeof activeLayer?.activeSlotIndex === 'number' ? activeLayer.activeSlotIndex : -1
+    const activeSlot = activeSlotIndex >= 0 ? activeLayer?.slots?.[activeSlotIndex] : null
+    const isSameActiveSlot = activeSlotIndex === slotIndex
+    const isSameActiveFile = activeSlot?.filePath === filePath
+
+    // Ignore stale events that no longer match the active slot/file for this layer.
+    if (!isSameActiveSlot || !isSameActiveFile) {
+      return
+    }
 
     // If the reverse companion clip fails to decode, do not kill the original slot.
     // Fallback to forward-only playback and stop retrying this broken reverse cache.
@@ -427,6 +539,7 @@ export default function OutputPreview({
       const requestKey = getBounceClipKey(filePath)
       delete reverseClipPathRef.current[requestKey]
       bouncePhaseRef.current[layerIndex] = 'forward'
+      reverseCooldownUntilRef.current[requestKey] = Date.now() + BOUNCE_REVERSE_COOLDOWN_MS
 
       const rebuildAttempts = reverseClipRebuildAttemptsRef.current[requestKey] || 0
       if (rebuildAttempts < 1 && !reverseClipRequestRef.current[requestKey]) {
@@ -440,7 +553,7 @@ export default function OutputPreview({
             }
           })
           .catch((error) => {
-            if (import.meta.env.DEV) {
+            if (MEDIA_DEBUG) {
               console.warn(
                 `[bounce:reverse-rebuild] failed file=${filePath} message=${error?.message || 'n/a'}`,
               )
@@ -453,7 +566,7 @@ export default function OutputPreview({
       }
 
       refreshBounceRender()
-      if (import.meta.env.DEV && !videoErrorLogRef.current[`reverse-failed-${key}-${code}-${reason}`]) {
+      if (MEDIA_DEBUG && !videoErrorLogRef.current[`reverse-failed-${key}-${code}-${reason}`]) {
         videoErrorLogRef.current[`reverse-failed-${key}-${code}-${reason}`] = true
         console.warn(
           `[bounce:reverse-failed] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason} src=${sourcePath}`,
@@ -462,7 +575,88 @@ export default function OutputPreview({
       return
     }
 
-    if (import.meta.env.DEV && !videoErrorLogRef.current[`${key}-${code}-${reason}`]) {
+    const isStillActiveOriginal = activeSlotIndex === slotIndex && activeSlot?.filePath === filePath
+    const bounceEnabled = Boolean(activeLayer?.videoMotion?.bounceEnabled)
+    const transientForwardFailure = code === 3 || code === 4
+    const forwardRetryKey = `${layerIndex}-${slotIndex}-${filePath || 'no-file'}`
+    const originalSourceKey = getVideoErrorKey(layerIndex, slotIndex, filePath)
+    const hasPlayedOriginal = Boolean(successfulCanPlayRef.current[originalSourceKey])
+    const previousRetryCount = forwardRecoverAttemptsRef.current[forwardRetryKey] || 0
+    const lastRetryAt = forwardRecoverLastAtRef.current[forwardRetryKey] || 0
+    const retryCount = Date.now() - lastRetryAt > BOUNCE_FORWARD_RETRY_RESET_MS ? 0 : previousRetryCount
+    const bounceClipKey = getBounceClipKey(filePath)
+
+    // During bounce source swaps, browsers can occasionally report transient source/decode
+    // errors on the forward asset right after a successful canplay. Retry once before
+    // failing the slot to avoid false-positive slot kills.
+    if (isStillActiveOriginal && bounceEnabled && transientForwardFailure && retryCount < BOUNCE_FORWARD_RETRY_LIMIT) {
+      forwardRecoverAttemptsRef.current[forwardRetryKey] = retryCount + 1
+      forwardRecoverLastAtRef.current[forwardRetryKey] = Date.now()
+      bouncePhaseRef.current[layerIndex] = 'forward'
+
+      const failedEl = errorEvent?.currentTarget
+      if (failedEl) {
+        failedEl.pause()
+        failedEl.removeAttribute('src')
+        failedEl.load()
+      }
+
+      if (MEDIA_DEBUG) {
+        console.warn(
+          `[bounce:forward-retry] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason} path=${filePath || 'n/a'}`,
+        )
+      }
+
+      refreshBounceRender()
+      return
+    }
+
+    // If the original clip has already proven it can play in this session,
+    // treat subsequent bounce-time decode/source errors as transient swap instability.
+    // Keep the slot alive in forward-only mode instead of marking it failed.
+    if (isStillActiveOriginal && bounceEnabled && transientForwardFailure && hasPlayedOriginal) {
+      delete reverseClipPathRef.current[bounceClipKey]
+      bouncePhaseRef.current[layerIndex] = 'forward'
+      reverseCooldownUntilRef.current[bounceClipKey] = Date.now() + BOUNCE_REVERSE_COOLDOWN_MS
+      forwardRecoverAttemptsRef.current[forwardRetryKey] = 0
+      forwardRecoverLastAtRef.current[forwardRetryKey] = Date.now()
+
+      const failedEl = errorEvent?.currentTarget
+      if (failedEl) {
+        failedEl.pause()
+        failedEl.removeAttribute('src')
+        failedEl.load()
+      }
+
+      if (MEDIA_DEBUG) {
+        console.warn(
+          `[bounce:forward-known-good-recover] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason}`,
+        )
+      }
+
+      refreshBounceRender()
+      return
+    }
+
+    // If forward source-swap errors keep happening for this bounce clip, fall back to
+    // forward-only playback for a short cooldown instead of killing the slot.
+    if (isStillActiveOriginal && bounceEnabled && transientForwardFailure) {
+      delete reverseClipPathRef.current[bounceClipKey]
+      bouncePhaseRef.current[layerIndex] = 'forward'
+      reverseCooldownUntilRef.current[bounceClipKey] = Date.now() + BOUNCE_REVERSE_COOLDOWN_MS
+      forwardRecoverLastAtRef.current[forwardRetryKey] = Date.now()
+
+      if (MEDIA_DEBUG) {
+        console.warn(
+          `[bounce:cooldown] layer=${layerIndex + 1} slot=${slotIndex + 1} reason=forward-errors cooldownMs=${BOUNCE_REVERSE_COOLDOWN_MS}`,
+        )
+      }
+
+      refreshBounceRender()
+      return
+    }
+
+    if (MEDIA_DEBUG && !videoErrorLogRef.current[`${key}-${code}-${reason}`]) {
       videoErrorLogRef.current[`${key}-${code}-${reason}`] = true
       console.error(
         `[video:error] layer=${layerIndex + 1} slot=${slotIndex + 1} code=${code || 'n/a'} reason=${reason} path=${sourcePath || filePath || 'n/a'}`,
@@ -495,15 +689,14 @@ export default function OutputPreview({
   const handleVideoCanPlay = (layerIndex, slotIndex, filePath, sourcePath, isBounceEnabled, event) => {
     const effectivePath = sourcePath || filePath
     const key = `${layerIndex}-${slotIndex}-${effectivePath}`
-    if (import.meta.env.DEV && !canPlayLogRef.current[key]) {
+    successfulCanPlayRef.current[getVideoErrorKey(layerIndex, slotIndex, effectivePath)] = true
+    if (filePath) {
+      successfulCanPlayRef.current[getVideoErrorKey(layerIndex, slotIndex, filePath)] = true
+    }
+    if (MEDIA_DEBUG && !canPlayLogRef.current[key]) {
       canPlayLogRef.current[key] = true
       console.info(`[video:canplay] layer=${layerIndex + 1} slot=${slotIndex + 1} path=${effectivePath}`)
     }
-
-    if (playAttemptRef.current[key]) {
-      return
-    }
-    playAttemptRef.current[key] = true
 
     // Bounce mode intentionally pauses and seeks manually, so forcing play()
     // here can create AbortError races during transitions.
@@ -511,10 +704,14 @@ export default function OutputPreview({
       const video = event.currentTarget
       const layer = latestLayersRef.current?.[layerIndex]
       const phase = bouncePhaseRef.current[layerIndex] || 'forward'
+      const bounceCanPlayKey = `${layerIndex}-${slotIndex}-${effectivePath}`
       const bounds = getBounceSegmentBounds(video, layer?.videoMotion || {}, phase)
-      if (bounds) {
+      const shouldSeekOnCanPlay = !bounceCanPlaySeekRef.current[bounceCanPlayKey]
+      if (bounds && shouldSeekOnCanPlay) {
         seekVideoEfficient(video, bounds.start)
+        bounceCanPlaySeekRef.current[bounceCanPlayKey] = true
       }
+      tryResumeVideo(video)
       setVideoErrors((prev) => {
         const next = { ...prev }
         delete next[getVideoErrorKey(layerIndex, slotIndex, effectivePath)]
@@ -523,6 +720,11 @@ export default function OutputPreview({
       })
       return
     }
+
+    if (playAttemptRef.current[key]) {
+      return
+    }
+    playAttemptRef.current[key] = true
 
     const playPromise = event.currentTarget?.paused ? event.currentTarget?.play?.() : null
     if (playPromise && typeof playPromise.catch === 'function') {
@@ -536,7 +738,7 @@ export default function OutputPreview({
           playError,
           filePath: effectivePath,
         })
-        if (import.meta.env.DEV && !playRejectLogRef.current[key]) {
+        if (MEDIA_DEBUG && !playRejectLogRef.current[key]) {
           playRejectLogRef.current[key] = true
           console.warn(
             `[video:play-reject] layer=${layerIndex + 1} slot=${slotIndex + 1} name=${playError?.name || 'Error'} message=${playError?.message || 'n/a'}`,
@@ -563,17 +765,18 @@ export default function OutputPreview({
       const bouncePhase = bouncePhaseRef.current[layerIndex] || 'forward'
       const reversePath = reverseClipPathRef.current[getBounceClipKey(filePath)]
       const reverseSegment = getBounceSegmentBounds(video, motion || {}, 'reverse')
+
+      if (bouncePhase === 'forward' && video.currentTime < segment.start) {
+        video.currentTime = segment.start
+      }
+      if (bouncePhase === 'reverse' && reverseSegment && video.currentTime < reverseSegment.start) {
+        video.currentTime = reverseSegment.start
+      }
+
       if (bouncePhase === 'forward' && video.currentTime >= segment.end) {
         if (!reversePath) {
           video.currentTime = segment.start
-          if (video.paused) {
-            const playPromise = video.play?.()
-            if (playPromise && typeof playPromise.catch === 'function') {
-              playPromise.catch(() => {
-                // Ignore play races while reverse media is still preparing.
-              })
-            }
-          }
+          tryResumeVideo(video)
           return
         }
         bouncePhaseRef.current[layerIndex] = 'reverse'
@@ -591,15 +794,39 @@ export default function OutputPreview({
 
     if (video.currentTime < segment.start || video.currentTime >= segment.end) {
       video.currentTime = segment.start
-      if (video.paused) {
-        const playPromise = video.play?.()
-        if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.catch(() => {
-            // Ignore play races caused by segment rewinds.
-          })
-        }
-      }
+      tryResumeVideo(video)
     }
+  }
+
+  const handleVideoEnded = (layerIndex, slotIndex, filePath, motion, event) => {
+    const video = event.currentTarget
+    const segment = getSegmentBounds(video, motion || {})
+    if (!segment) {
+      return
+    }
+
+    const bounceEnabled = Boolean(motion?.bounceEnabled)
+    if (bounceEnabled) {
+      const bouncePhase = bouncePhaseRef.current[layerIndex] || 'forward'
+      const reversePath = reverseClipPathRef.current[getBounceClipKey(filePath)]
+
+      if (bouncePhase === 'forward') {
+        if (reversePath) {
+          bouncePhaseRef.current[layerIndex] = 'reverse'
+          refreshBounceRender()
+          return
+        }
+        video.currentTime = segment.start
+        tryResumeVideo(video)
+        return
+      }
+      bouncePhaseRef.current[layerIndex] = 'forward'
+      refreshBounceRender()
+      return
+    }
+
+    video.currentTime = segment.start
+    tryResumeVideo(video)
   }
 
   const activeCount = layers.reduce(
@@ -652,12 +879,13 @@ export default function OutputPreview({
           const bounceEnabled = Boolean(layer.videoMotion?.bounceEnabled)
           const bouncePhase = bouncePhaseRef.current[layer.layerIndex] || 'forward'
           const reversePath = reverseClipPathRef.current[getBounceClipKey(active.filePath)]
+          const bounceReady = bounceEnabled && Boolean(reversePath)
           const effectivePath = bounceEnabled && bouncePhase === 'reverse' && reversePath
             ? reversePath
             : active.filePath
-          const videoKey = `video-${layer.label}-${effectivePath}-${bouncePhase}`
+          const videoKey = `video-${layer.label}-${effectivePath}`
           const src = toFileUrl(effectivePath)
-          if (import.meta.env.DEV && !srcLogRef.current[videoKey]) {
+          if (MEDIA_DEBUG && !srcLogRef.current[videoKey]) {
             srcLogRef.current[videoKey] = true
             console.info(
               `[video:src] active layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} path=${effectivePath} src=${src}`,
@@ -672,7 +900,7 @@ export default function OutputPreview({
               className="preview-layer-video"
               src={src}
               autoPlay
-              loop={!Boolean(layer.videoMotion?.bounceEnabled)}
+              loop={!bounceReady}
               muted
               playsInline
               preload="auto"
@@ -695,12 +923,23 @@ export default function OutputPreview({
                   event,
                 )
               }
+              onEnded={(event) =>
+                handleVideoEnded(
+                  layer.layerIndex,
+                  active.slotIndex,
+                  active.filePath,
+                  layer.videoMotion,
+                  event,
+                )
+              }
               onError={(event) =>
                 handleVideoError(layer.layerIndex, active.slotIndex, active.filePath, effectivePath, event)
               }
               style={{
                 opacity: layer.opacity,
                 mixBlendMode: blendModeToCss(layer.blendMode),
+                transform: `scale(${layer.videoMotion?.scale ?? 1})`,
+                transformOrigin: 'center center',
               }}
             />
           )

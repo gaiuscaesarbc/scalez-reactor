@@ -12,6 +12,7 @@ A live-performance VJ application built with Electron + React + Vite. Features m
 | npm | 9 or later |
 | Windows | 10 or 11 (64-bit) |
 | FFmpeg | Required for bounce reverse playback |
+| mpv | Recommended for native (non-Chromium) playback |
 
 ---
 
@@ -46,6 +47,18 @@ After install, restart your terminal. The app auto-detects the WinGet-installed 
 
 Download a full build from [ffmpeg.org/download.html](https://ffmpeg.org/download.html) and extract it anywhere. The app will fall back to PATH resolution if the WinGet package is not found.
 
+### 4. Install mpv (recommended for native playback)
+
+Native playback runs outside Chromium and is more reliable for long sessions.
+
+**Recommended — WinGet:**
+
+```powershell
+winget install --id shinchiro.mpv --exact --accept-package-agreements --accept-source-agreements
+```
+
+If `mpv.exe` is not found, the app will stay in browser output mode.
+
 ---
 
 ## Running in Development
@@ -57,6 +70,11 @@ npm run dev
 This starts the Vite dev server and launches Electron concurrently. Two windows open:
 - **Control Window** — full UI, layers, audio panel, FX
 - **Output Window** — clean full-screen video output (for OBS capture or projector)
+
+Native output toggle:
+- Use the `Native ON/OFF` button in the Control window header.
+- When enabled and mpv is installed, playback is driven by a native mpv window.
+- The Electron Output window will show a `NATIVE OUTPUT ACTIVE` placeholder while native mode is active.
 
 ---
 

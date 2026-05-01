@@ -75,6 +75,11 @@ function makeDefaultVideoMotion() {
     timelineThreshold: 0.2,
     timelineMode: 'pulse',
     timelineSource: 'low',
+    scale: 1,
+    scaleAmount: 0,
+    scaleThreshold: 0.06,
+    scaleMode: 'normal',
+    scaleSource: 'low',
   }
 }
 
@@ -86,12 +91,55 @@ function getWindowMode() {
 
 function OutputShell() {
   const syncedState = useOutputStateSubscription()
+  const [nativePlaybackStatus, setNativePlaybackStatus] = useState(null)
+
+  useEffect(() => {
+    let disposed = false
+
+    const refresh = async () => {
+      try {
+        const status = await window.scalezApi?.getNativePlaybackStatus?.()
+        if (!disposed && status) {
+          setNativePlaybackStatus(status)
+        }
+      } catch {
+        // Native playback is optional.
+      }
+    }
+
+    void refresh()
+    const timer = setInterval(() => {
+      void refresh()
+    }, 1000)
+
+    return () => {
+      disposed = true
+      clearInterval(timer)
+    }
+  }, [])
 
   const layers = syncedState?.layers || []
   const masterFx = syncedState?.masterFx || DEFAULT_MASTER_FX
   const blackout = Boolean(syncedState?.blackout)
   const bassLevel = syncedState?.audio?.bassLevel ?? 0.2
   const spectrumLevels = syncedState?.audio?.spectrumLevels || { full: bassLevel, low: bassLevel, mid: 0, high: 0 }
+
+  if (nativePlaybackStatus?.enabled) {
+    return (
+      <main className="output-shell">
+        <section className="output-preview-wrap">
+          <div className="output-preview" role="img" aria-label="Native playback active">
+            <div className="fallback-screen">
+              <div className="fallback-content">
+                <h1>NATIVE OUTPUT ACTIVE</h1>
+                <p>mpv window is driving playback outside Chromium.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    )
+  }
 
   return (
     <main className="output-shell">
@@ -151,10 +199,13 @@ function ControlShell() {
     1: makeDefaultVideoMotion(),
     2: makeDefaultVideoMotion(),
   })
+  const [clipVideoMotion, setClipVideoMotion] = useState({})
   const [safeMode, setSafeMode] = useState(false)
   const [showTestMode, setShowTestMode] = useState(false)
   const [compactMode, setCompactMode] = useState(false)
   const [savedShows, setSavedShows] = useState([])
+  const [nativePlaybackStatus, setNativePlaybackStatus] = useState(null)
+  const [nativePlaybackBusy, setNativePlaybackBusy] = useState(false)
   // M9: performance control state
   const [focusedLayer, setFocusedLayer] = useState(null) // null | 0 | 1 | 2
   const [cueMode, setCueMode] = useState(false)
@@ -213,6 +264,58 @@ function ControlShell() {
   const handleScrollRef = useCallback((layerIndex, el) => {
     scrollContainersRef.current[layerIndex] = el
   }, [])
+
+  useEffect(() => {
+    let disposed = false
+
+    async function initNativePlayback() {
+      try {
+        const status = await window.scalezApi?.getNativePlaybackStatus?.()
+        if (disposed || !status) {
+          return
+        }
+        setNativePlaybackStatus(status)
+
+        if (!status.available) {
+          return
+        }
+
+        const saved = window.localStorage.getItem('scalez-native-playback')
+        const shouldEnable = saved == null ? true : saved === '1'
+        const nextStatus = await window.scalezApi?.setNativePlaybackEnabled?.(shouldEnable)
+        if (!disposed && nextStatus) {
+          setNativePlaybackStatus(nextStatus)
+        }
+      } catch {
+        // Native playback control is optional.
+      }
+    }
+
+    void initNativePlayback()
+    return () => {
+      disposed = true
+    }
+  }, [])
+
+  const handleToggleNativePlayback = useCallback(async () => {
+    if (nativePlaybackBusy) {
+      return
+    }
+
+    try {
+      setNativePlaybackBusy(true)
+      const enabledNow = Boolean(nativePlaybackStatus?.enabled)
+      const nextStatus = await window.scalezApi?.setNativePlaybackEnabled?.(!enabledNow)
+      if (nextStatus) {
+        setNativePlaybackStatus(nextStatus)
+        window.localStorage.setItem('scalez-native-playback', nextStatus.enabled ? '1' : '0')
+      }
+    } catch {
+      // Ignore toggle failures and keep UI responsive.
+    } finally {
+      setNativePlaybackBusy(false)
+    }
+  }, [nativePlaybackBusy, nativePlaybackStatus])
 
   // Restore last show on mount
   useEffect(() => {
@@ -361,6 +464,39 @@ function ControlShell() {
           }
           break
 
+        case 'layer-1-scale':
+          setLayerVideoMotion((current) => ({
+            ...current,
+            0: { ...(current[0] || makeDefaultVideoMotion()), scale: 0.25 + (midiValue / 127) * 2.75 },
+          }))
+          break
+
+        case 'layer-2-scale':
+          setLayerVideoMotion((current) => ({
+            ...current,
+            1: { ...(current[1] || makeDefaultVideoMotion()), scale: 0.25 + (midiValue / 127) * 2.75 },
+          }))
+          break
+
+        case 'layer-3-scale':
+          setLayerVideoMotion((current) => ({
+            ...current,
+            2: { ...(current[2] || makeDefaultVideoMotion()), scale: 0.25 + (midiValue / 127) * 2.75 },
+          }))
+          break
+
+        case 'focused-layer-scale':
+          if (focusedLayer !== null) {
+            setLayerVideoMotion((current) => ({
+              ...current,
+              [focusedLayer]: {
+                ...(current[focusedLayer] || makeDefaultVideoMotion()),
+                scale: 0.25 + (midiValue / 127) * 2.75,
+              },
+            }))
+          }
+          break
+
         default:
           break
       }
@@ -386,6 +522,7 @@ function ControlShell() {
     audioFxLinks,
     layerAudioLinks,
     layerVideoMotion,
+    clipVideoMotion,
     masterFx,
   })
 
@@ -397,6 +534,7 @@ function ControlShell() {
     if (settings.audioFxLinks != null) setAudioFxLinks(settings.audioFxLinks)
     if (settings.layerAudioLinks != null) setLayerAudioLinks(settings.layerAudioLinks)
     if (settings.layerVideoMotion != null) setLayerVideoMotion(settings.layerVideoMotion)
+    if (settings.clipVideoMotion != null) setClipVideoMotion(settings.clipVideoMotion)
     if (settings.masterFx != null) setMasterFx(settings.masterFx)
   }
 
@@ -498,6 +636,42 @@ function ControlShell() {
   }, [])
 
   const setLayerVideoMotionValue = useCallback((layerIndex, field, value) => {
+    const isClipTrimField = field === 'inPoint' || field === 'outPoint'
+    const activeSlotIndex = layers[layerIndex]?.activeSlotIndex
+    const activeClip =
+      typeof activeSlotIndex === 'number' ? layers[layerIndex]?.slots?.[activeSlotIndex] : null
+    const activeFilePath = activeClip?.filePath || ''
+
+    if (isClipTrimField && activeFilePath) {
+      setClipVideoMotion((current) => {
+        const baseMotion = layerVideoMotion[layerIndex] || makeDefaultVideoMotion()
+        const prev = current[activeFilePath] || {
+          inPoint: baseMotion.inPoint,
+          outPoint: baseMotion.outPoint,
+        }
+        const nextRaw = {
+          ...prev,
+          [field]: Number(value),
+        }
+
+        const minGap = 0.01
+        const next = { ...nextRaw }
+        if (next.outPoint < next.inPoint + minGap) {
+          if (field === 'inPoint') {
+            next.outPoint = Math.min(1, next.inPoint + minGap)
+          } else if (field === 'outPoint') {
+            next.inPoint = Math.max(0, next.outPoint - minGap)
+          }
+        }
+
+        return {
+          ...current,
+          [activeFilePath]: next,
+        }
+      })
+      return
+    }
+
     setLayerVideoMotion((current) => {
       const prev = current[layerIndex] || makeDefaultVideoMotion()
       const nextRaw = {
@@ -526,7 +700,7 @@ function ControlShell() {
         [layerIndex]: next,
       }
     })
-  }, [])
+  }, [layers, layerVideoMotion])
 
   const rebuildLayerReverseCache = useCallback(async (layerIndex) => {
     const layer = layers[layerIndex]
@@ -552,14 +726,34 @@ function ControlShell() {
       // Modulate within a range so audio link remains visible even when base opacity is 1.
       const opacityFloor = Math.max(0, layer.opacity * (1 - linkAmount))
       const reactiveOpacity = opacityFloor + reactiveLevel * (layer.opacity - opacityFloor)
-      const videoMotion = layerVideoMotion[layer.layerIndex] || makeDefaultVideoMotion()
+      const baseVideoMotion = layerVideoMotion[layer.layerIndex] || makeDefaultVideoMotion()
+      const activeSlotIndex = layer.activeSlotIndex
+      const activeClip = typeof activeSlotIndex === 'number' ? layer.slots?.[activeSlotIndex] : null
+      const clipMotion = activeClip?.filePath ? clipVideoMotion[activeClip.filePath] : null
+      const videoMotion = clipMotion
+        ? {
+            ...baseVideoMotion,
+            inPoint: clipMotion.inPoint ?? baseVideoMotion.inPoint,
+            outPoint: clipMotion.outPoint ?? baseVideoMotion.outPoint,
+          }
+        : baseVideoMotion
+
+      const scaleSourceLevel = getSpectrumSourceLevel(spectrumLevels, videoMotion.scaleSource || 'low')
+      const scaleBoost = getReactiveAmount(
+        scaleSourceLevel,
+        videoMotion.scaleThreshold ?? 0.06,
+        videoMotion.scaleMode || 'normal',
+        videoMotion.scaleAmount ?? 0,
+      )
+      const reactiveScale = Math.max(0.05, (videoMotion.scale ?? 1) + scaleBoost)
+
       return {
         ...layer,
         opacity: Math.min(1, reactiveOpacity),
-        videoMotion,
+        videoMotion: { ...videoMotion, scale: reactiveScale },
       }
     }),
-    [layers, layerAudioLinks, layerVideoMotion, spectrumLevels],
+    [layers, layerAudioLinks, layerVideoMotion, clipVideoMotion, spectrumLevels],
   )
 
   const effectiveMasterFx = useMemo(
@@ -637,6 +831,21 @@ function ControlShell() {
           </div>
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            className="devtools-btn"
+            onClick={handleToggleNativePlayback}
+            disabled={nativePlaybackBusy || !nativePlaybackStatus?.available}
+            title={
+              nativePlaybackStatus?.available
+                ? nativePlaybackStatus?.enabled
+                  ? 'Disable native mpv output engine'
+                  : 'Enable native mpv output engine'
+                : nativePlaybackStatus?.lastError || 'Native playback unavailable: install mpv'
+            }
+          >
+            Native {nativePlaybackStatus?.enabled ? 'ON' : 'OFF'}
+          </button>
           <MidiPanel midiState={midiState} />
           <ShowManager
             savedShows={savedShows}
@@ -742,30 +951,45 @@ function ControlShell() {
       )}
 
       <section className="layer-stack">
-        {displayLayers.map((layer) => (
-          <LayerStrip
-            key={layer.label}
-            layer={layer}
-            isFocused={focusedLayer === layer.layerIndex}
-            cueMode={cueMode}
-            cuedSlotIndex={cuedSlots[layer.layerIndex] ?? null}
-            midiFlashSlots={midiFlashSlots}
-            audioLink={layerAudioLinks[layer.layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }}
-            videoMotion={layerVideoMotion[layer.layerIndex] || makeDefaultVideoMotion()}
-            onToggleVisible={setLayerVisible}
-            onOpacityChange={setLayerOpacity}
-            onBlendModeChange={setLayerBlendMode}
-            onClear={clearLayer}
-            onTrigger={handleTriggerOrCue}
-            onLoad={loadClipIntoSlot}
-            onFocusToggle={handleFocusToggle}
-            onLaunchCue={handleLaunchCue}
-            onScrollRef={handleScrollRef}
-            onAudioLinkChange={setLayerAudioLink}
-            onVideoMotionChange={setLayerVideoMotionValue}
-            onRebuildReverseCache={rebuildLayerReverseCache}
-          />
-        ))}
+        {displayLayers.map((layer) => {
+          const baseVideoMotion = layerVideoMotion[layer.layerIndex] || makeDefaultVideoMotion()
+          const activeSlotIndex = layer.activeSlotIndex
+          const activeClip =
+            typeof activeSlotIndex === 'number' ? layer.slots?.[activeSlotIndex] : null
+          const clipMotion = activeClip?.filePath ? clipVideoMotion[activeClip.filePath] : null
+          const uiVideoMotion = clipMotion
+            ? {
+                ...baseVideoMotion,
+                inPoint: clipMotion.inPoint ?? baseVideoMotion.inPoint,
+                outPoint: clipMotion.outPoint ?? baseVideoMotion.outPoint,
+              }
+            : baseVideoMotion
+
+          return (
+            <LayerStrip
+              key={layer.label}
+              layer={layer}
+              isFocused={focusedLayer === layer.layerIndex}
+              cueMode={cueMode}
+              cuedSlotIndex={cuedSlots[layer.layerIndex] ?? null}
+              midiFlashSlots={midiFlashSlots}
+              audioLink={layerAudioLinks[layer.layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }}
+              videoMotion={uiVideoMotion}
+              onToggleVisible={setLayerVisible}
+              onOpacityChange={setLayerOpacity}
+              onBlendModeChange={setLayerBlendMode}
+              onClear={clearLayer}
+              onTrigger={handleTriggerOrCue}
+              onLoad={loadClipIntoSlot}
+              onFocusToggle={handleFocusToggle}
+              onLaunchCue={handleLaunchCue}
+              onScrollRef={handleScrollRef}
+              onAudioLinkChange={setLayerAudioLink}
+              onVideoMotionChange={setLayerVideoMotionValue}
+              onRebuildReverseCache={rebuildLayerReverseCache}
+            />
+          )
+        })}
       </section>
 
       <MasterFxPanel

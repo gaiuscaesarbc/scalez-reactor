@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('scalezApi', {
   },
   publishOutputState: (state) => ipcRenderer.send('output:state-publish', state),
   getOutputState: () => ipcRenderer.invoke('output:state-get'),
+  getNativePlaybackStatus: () => ipcRenderer.invoke('native-playback:get-status'),
+  setNativePlaybackEnabled: (enabled) => ipcRenderer.invoke('native-playback:set-enabled', enabled),
   onOutputStateUpdate: (callback) => {
     if (typeof callback !== 'function') {
       return () => {}

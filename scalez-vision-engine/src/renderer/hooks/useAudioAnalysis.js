@@ -16,6 +16,19 @@ function applyNoiseFloor(value, floor = 0.045) {
   return (clamped - floor) / (1 - floor)
 }
 
+function isAudioDebugEnabled() {
+  if (!import.meta.env.DEV) {
+    return false
+  }
+  try {
+    return window.localStorage?.getItem('scalez-debug-audio') === '1'
+  } catch {
+    return false
+  }
+}
+
+const AUDIO_DEBUG = isAudioDebugEnabled()
+
 async function requestMicrophoneStream() {
   if (navigator.mediaDevices?.getUserMedia) {
     return navigator.mediaDevices.getUserMedia({ audio: true })
@@ -302,7 +315,7 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
         setSpectrumBins(Array.from(smoothedBinsRef.current || []))
       }
 
-      if (import.meta.env.DEV) {
+      if (AUDIO_DEBUG) {
         if (perfWindowStartRef.current === 0) {
           perfWindowStartRef.current = now
         }

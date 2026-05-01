@@ -173,6 +173,77 @@ export default function LayerStrip({
           {showVideoMotion && (
             <>
               <label className="control-line">
+                <span>Scale: {(videoMotion.scale ?? 1).toFixed(2)}x</span>
+                <input
+                  type="range"
+                  min="0.05"
+                  max="3"
+                  step="0.01"
+                  value={videoMotion.scale ?? 1}
+                  onChange={(event) =>
+                    onVideoMotionChange?.(layer.layerIndex, 'scale', Number(event.target.value))
+                  }
+                />
+              </label>
+
+              <label className="control-line">
+                <span>Audio Scale Amount: {(videoMotion.scaleAmount ?? 0).toFixed(2)}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.01"
+                  value={videoMotion.scaleAmount ?? 0}
+                  onChange={(event) =>
+                    onVideoMotionChange?.(layer.layerIndex, 'scaleAmount', Number(event.target.value))
+                  }
+                />
+              </label>
+
+              <label className="control-line">
+                <span>Scale Threshold: {(videoMotion.scaleThreshold ?? 0.06).toFixed(2)}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={videoMotion.scaleThreshold ?? 0.06}
+                  onChange={(event) =>
+                    onVideoMotionChange?.(layer.layerIndex, 'scaleThreshold', Number(event.target.value))
+                  }
+                />
+              </label>
+
+              <label className="control-line">
+                <span>Scale Mode</span>
+                <select
+                  value={videoMotion.scaleMode || 'normal'}
+                  onChange={(event) =>
+                    onVideoMotionChange?.(layer.layerIndex, 'scaleMode', event.target.value)
+                  }
+                >
+                  <option value="normal">Normal</option>
+                  <option value="invert">Invert</option>
+                  <option value="pulse">Pulse</option>
+                </select>
+              </label>
+
+              <label className="control-line">
+                <span>Scale Spectrum</span>
+                <select
+                  value={videoMotion.scaleSource || 'low'}
+                  onChange={(event) =>
+                    onVideoMotionChange?.(layer.layerIndex, 'scaleSource', event.target.value)
+                  }
+                >
+                  <option value="low">Low</option>
+                  <option value="mid">Mid</option>
+                  <option value="high">High</option>
+                  <option value="full">Full</option>
+                </select>
+              </label>
+
+              <label className="control-line">
                 <span>In Point: {Math.round(videoMotion.inPoint * 100)}%</span>
                 <input
                   type="range"

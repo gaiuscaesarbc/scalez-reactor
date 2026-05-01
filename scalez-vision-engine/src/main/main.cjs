@@ -3,8 +3,8 @@ const fs = require('node:fs')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { pathToFileURL } = require('node:url')
-const { app, BrowserWindow, ipcMain, protocol, net, session } = require('electron')
-const { dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, protocol, net, session, dialog, screen } = require('electron')
+const { NativePlaybackEngine } = require('./nativePlayback.cjs')
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -26,6 +26,11 @@ const openDevtoolsByDefault = process.env.SCALEZ_OPEN_DEVTOOLS === '1'
 let controlWindow = null
 let outputWindow = null
 let reverseCacheDir = null
+let windowStatePath = null
+let windowStateCache = null
+const reverseCacheJobs = new Map()
+let nativePlaybackEngine = null
+let lastNativePlaybackSignature = ''
 let sharedOutputState = {
   layers: [],
   masterFx: {
@@ -51,6 +56,162 @@ function getReverseCacheDir() {
     fs.mkdirSync(reverseCacheDir, { recursive: true })
   }
   return reverseCacheDir
+}
+
+function getWindowStatePath() {
+  if (!windowStatePath) {
+    windowStatePath = path.join(app.getPath('userData'), 'window-state.json')
+  }
+  return windowStatePath
+}
+
+function getDefaultWindowState() {
+  return {
+    control: {
+      bounds: {
+        width: 1600,
+        height: 980,
+      },
+      isFullScreen: false,
+    },
+    output: {
+      bounds: {
+        width: 1920,
+        height: 1080,
+      },
+      isFullScreen: false,
+    },
+  }
+}
+
+function readWindowState() {
+  if (windowStateCache) {
+    return windowStateCache
+  }
+
+  const fallback = getDefaultWindowState()
+  try {
+    const raw = fs.readFileSync(getWindowStatePath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    windowStateCache = {
+      control: {
+        ...fallback.control,
+        ...(parsed?.control || {}),
+        bounds: {
+          ...fallback.control.bounds,
+          ...(parsed?.control?.bounds || {}),
+        },
+      },
+      output: {
+        ...fallback.output,
+        ...(parsed?.output || {}),
+        bounds: {
+          ...fallback.output.bounds,
+          ...(parsed?.output?.bounds || {}),
+        },
+      },
+    }
+  } catch {
+    windowStateCache = fallback
+  }
+
+  return windowStateCache
+}
+
+function writeWindowState() {
+  try {
+    fs.writeFileSync(getWindowStatePath(), JSON.stringify(windowStateCache || getDefaultWindowState(), null, 2), 'utf8')
+  } catch {
+    // Ignore state persistence failures.
+  }
+}
+
+function sanitizeBounds(input, fallback) {
+  const width = Number.isFinite(input?.width) ? Math.round(input.width) : fallback.width
+  const height = Number.isFinite(input?.height) ? Math.round(input.height) : fallback.height
+  const x = Number.isFinite(input?.x) ? Math.round(input.x) : undefined
+  const y = Number.isFinite(input?.y) ? Math.round(input.y) : undefined
+  return { width, height, x, y }
+}
+
+function clampBoundsToDisplay(bounds, minWidth, minHeight) {
+  const fallbackCenter = { x: 100, y: 100 }
+  const refPoint = Number.isFinite(bounds.x) && Number.isFinite(bounds.y)
+    ? {
+        x: bounds.x + Math.max(1, Math.floor(bounds.width / 2)),
+        y: bounds.y + Math.max(1, Math.floor(bounds.height / 2)),
+      }
+    : fallbackCenter
+  const targetDisplay = screen.getDisplayNearestPoint(refPoint)
+  const workArea = targetDisplay?.workArea || { x: 0, y: 0, width: 1920, height: 1080 }
+
+  const width = Math.max(minWidth, Math.min(bounds.width, workArea.width))
+  const height = Math.max(minHeight, Math.min(bounds.height, workArea.height))
+
+  const fallbackX = workArea.x + Math.max(0, Math.floor((workArea.width - width) / 2))
+  const fallbackY = workArea.y + Math.max(0, Math.floor((workArea.height - height) / 2))
+  const rawX = Number.isFinite(bounds.x) ? bounds.x : fallbackX
+  const rawY = Number.isFinite(bounds.y) ? bounds.y : fallbackY
+
+  const x = Math.min(Math.max(rawX, workArea.x), workArea.x + workArea.width - width)
+  const y = Math.min(Math.max(rawY, workArea.y), workArea.y + workArea.height - height)
+
+  return { x, y, width, height }
+}
+
+function getRestoredWindowBounds(windowKey, defaults, minWidth, minHeight) {
+  const savedState = readWindowState()?.[windowKey]?.bounds || {}
+  const sanitized = sanitizeBounds(savedState, defaults)
+  return clampBoundsToDisplay(sanitized, minWidth, minHeight)
+}
+
+function persistWindowState(windowKey, nextPartial) {
+  const current = readWindowState()
+  current[windowKey] = {
+    ...(current[windowKey] || {}),
+    ...nextPartial,
+    bounds: {
+      ...((current[windowKey] || {}).bounds || {}),
+      ...(nextPartial.bounds || {}),
+    },
+  }
+  windowStateCache = current
+  writeWindowState()
+}
+
+function bindWindowStatePersistence(windowRef, windowKey, options = {}) {
+  const supportsFullscreen = Boolean(options.supportsFullscreen)
+  let saveTimer = null
+
+  const saveNow = () => {
+    if (!windowRef || windowRef.isDestroyed()) {
+      return
+    }
+
+    const bounds = windowRef.isFullScreen() ? windowRef.getNormalBounds() : windowRef.getBounds()
+    persistWindowState(windowKey, {
+      bounds,
+      isFullScreen: supportsFullscreen ? windowRef.isFullScreen() : false,
+    })
+  }
+
+  const saveSoon = () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+    }
+    saveTimer = setTimeout(() => {
+      saveNow()
+    }, 150)
+  }
+
+  windowRef.on('move', saveSoon)
+  windowRef.on('resize', saveSoon)
+  windowRef.on('close', saveNow)
+
+  if (supportsFullscreen) {
+    windowRef.on('enter-full-screen', saveSoon)
+    windowRef.on('leave-full-screen', saveSoon)
+  }
 }
 
 function getFfmpegExecutablePath() {
@@ -82,26 +243,29 @@ function getFfmpegExecutablePath() {
 }
 
 function ensureReverseCache(filePath, options = {}) {
-  return new Promise((resolve, reject) => {
-    if (!filePath || !fs.existsSync(filePath)) {
-      reject(new Error('Source clip does not exist.'))
-      return
-    }
+  if (!filePath || !fs.existsSync(filePath)) {
+    return Promise.reject(new Error('Source clip does not exist.'))
+  }
 
-    const ffmpegPath = getFfmpegExecutablePath()
-    if (!ffmpegPath) {
-      reject(new Error('FFmpeg is not available on this machine.'))
-      return
-    }
+  const ffmpegPath = getFfmpegExecutablePath()
+  if (!ffmpegPath) {
+    return Promise.reject(new Error('FFmpeg is not available on this machine.'))
+  }
 
-    const fileStats = fs.statSync(filePath)
-    const cacheKey = crypto
-      .createHash('sha1')
-      .update(`${filePath}:${fileStats.size}:${fileStats.mtimeMs}`)
-      .digest('hex')
-    const outputPath = path.join(getReverseCacheDir(), `${cacheKey}.mp4`)
-    const forceRebuild = Boolean(options.forceRebuild)
+  const fileStats = fs.statSync(filePath)
+  const cacheKey = crypto
+    .createHash('sha1')
+    .update(`${filePath}:${fileStats.size}:${fileStats.mtimeMs}`)
+    .digest('hex')
+  const outputPath = path.join(getReverseCacheDir(), `${cacheKey}.mp4`)
+  const forceRebuild = Boolean(options.forceRebuild)
+  const jobKey = `${cacheKey}:${forceRebuild ? 'rebuild' : 'ensure'}`
 
+  if (reverseCacheJobs.has(jobKey)) {
+    return reverseCacheJobs.get(jobKey)
+  }
+
+  const job = new Promise((resolve, reject) => {
     if (forceRebuild && fs.existsSync(outputPath)) {
       try {
         fs.unlinkSync(outputPath)
@@ -177,7 +341,12 @@ function ensureReverseCache(filePath, options = {}) {
       }
       reject(new Error(stderr || `ffmpeg exited with code ${code}`))
     })
+  }).finally(() => {
+    reverseCacheJobs.delete(jobKey)
   })
+
+  reverseCacheJobs.set(jobKey, job)
+  return job
 }
 
 function loadRendererWindow(windowRef, mode) {
@@ -194,11 +363,51 @@ function loadRendererWindow(windowRef, mode) {
   })
 }
 
+function getNativePlaybackEngine() {
+  if (!nativePlaybackEngine) {
+    nativePlaybackEngine = new NativePlaybackEngine({
+      ensureReverseCache,
+      isDev,
+    })
+  }
+  return nativePlaybackEngine
+}
+
+function buildNativePlaybackSignature(state) {
+  const layers = Array.isArray(state?.layers) ? state.layers : []
+  return layers
+    .map((layer) => {
+      const activeSlotIndex = typeof layer?.activeSlotIndex === 'number' ? layer.activeSlotIndex : -1
+      const activeSlot = activeSlotIndex >= 0 ? layer?.slots?.[activeSlotIndex] : null
+      const motion = layer?.videoMotion || {}
+      return [
+        layer?.layerIndex ?? -1,
+        layer?.visible ? 1 : 0,
+        activeSlot?.filePath || '',
+        Number(motion.inPoint ?? 0).toFixed(3),
+        Number(motion.outPoint ?? 1).toFixed(3),
+        motion.bounceEnabled ? 1 : 0,
+        Number(motion.bounceSpeed ?? 1).toFixed(3),
+        Number(motion.baseSpeed ?? 1).toFixed(3),
+      ].join(':')
+    })
+    .join('|')
+}
+
 function createControlWindow() {
+  const bounds = getRestoredWindowBounds(
+    'control',
+    { width: 1600, height: 980 },
+    1200,
+    780,
+  )
+
   controlWindow = new BrowserWindow({
     title: 'SCALEZ Vision Engine - Control',
-    width: 1600,
-    height: 980,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
     minWidth: 1200,
     minHeight: 780,
     backgroundColor: '#050914',
@@ -211,6 +420,7 @@ function createControlWindow() {
     },
   })
 
+  bindWindowStatePersistence(controlWindow, 'control')
   loadRendererWindow(controlWindow, 'control')
 
   controlWindow.on('closed', () => {
@@ -222,10 +432,20 @@ function createControlWindow() {
 }
 
 function createOutputWindow() {
+  const bounds = getRestoredWindowBounds(
+    'output',
+    { width: 1920, height: 1080 },
+    800,
+    600,
+  )
+  const savedOutputState = readWindowState()?.output || {}
+
   outputWindow = new BrowserWindow({
     title: 'SCALEZ Vision Engine - Output',
-    width: 1920,
-    height: 1080,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
     backgroundColor: '#000000',
     autoHideMenuBar: true,
     webPreferences: {
@@ -237,7 +457,16 @@ function createOutputWindow() {
     },
   })
 
+  bindWindowStatePersistence(outputWindow, 'output', { supportsFullscreen: true })
   loadRendererWindow(outputWindow, 'output')
+
+  if (savedOutputState.isFullScreen) {
+    outputWindow.once('ready-to-show', () => {
+      if (outputWindow && !outputWindow.isDestroyed()) {
+        outputWindow.setFullScreen(true)
+      }
+    })
+  }
 
   outputWindow.webContents.on('did-finish-load', () => {
     if (outputWindow && !outputWindow.isDestroyed()) {
@@ -344,9 +573,30 @@ function registerIpcHandlers() {
     if (outputWindow && !outputWindow.isDestroyed()) {
       outputWindow.webContents.send('output:state-update', sharedOutputState)
     }
+
+    const nativeEngine = getNativePlaybackEngine()
+    if (nativeEngine.getStatus().enabled) {
+      const nextSignature = buildNativePlaybackSignature(sharedOutputState)
+      if (nextSignature !== lastNativePlaybackSignature) {
+        lastNativePlaybackSignature = nextSignature
+        nativeEngine.applyOutputState(sharedOutputState).catch((error) => {
+          if (isDev) {
+            console.warn(`[native:apply-state] ${error?.message || 'failed'}`)
+          }
+        })
+      }
+    }
   })
 
   ipcMain.handle('output:state-get', () => sharedOutputState)
+
+  ipcMain.handle('native-playback:get-status', () => {
+    return getNativePlaybackEngine().getStatus()
+  })
+
+  ipcMain.handle('native-playback:set-enabled', async (_event, enabled) => {
+    return getNativePlaybackEngine().setEnabled(enabled)
+  })
 }
 
 function isAllowedOrigin(origin) {
@@ -434,6 +684,7 @@ app.whenReady().then(() => {
   registerMediaProtocol()
   registerPermissionHandlers()
   registerIpcHandlers()
+  getNativePlaybackEngine()
   createControlWindow()
   createOutputWindow()
 
@@ -446,7 +697,16 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  if (nativePlaybackEngine) {
+    nativePlaybackEngine.stop()
+  }
   if (process.platform !== 'darwin') {
     app.quit()
+  }
+})
+
+app.on('before-quit', () => {
+  if (nativePlaybackEngine) {
+    nativePlaybackEngine.stop()
   }
 })
