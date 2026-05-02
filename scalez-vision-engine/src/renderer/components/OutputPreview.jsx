@@ -35,7 +35,10 @@ function getSpectrumSourceLevel(spectrumLevels, source, fallbackBass) {
   if (!spectrumLevels) {
     return fallbackBass
   }
+  if (source === 'sub') return spectrumLevels.sub ?? spectrumLevels.low ?? fallbackBass
   if (source === 'mid') return spectrumLevels.mid ?? fallbackBass
+  if (source === 'lowMid') return spectrumLevels.lowMid ?? spectrumLevels.mid ?? fallbackBass
+  if (source === 'presence') return spectrumLevels.presence ?? spectrumLevels.high ?? fallbackBass
   if (source === 'high') return spectrumLevels.high ?? fallbackBass
   if (source === 'full') return spectrumLevels.full ?? fallbackBass
   return spectrumLevels.low ?? fallbackBass
@@ -154,15 +157,21 @@ function tryResumeVideo(video) {
 const BOUNCE_FORWARD_RETRY_LIMIT = 3
 const BOUNCE_REVERSE_COOLDOWN_MS = 30000
 const BOUNCE_FORWARD_RETRY_RESET_MS = 15000
+const BOUNCE_BROWSER_EPSILON_SECONDS = 0.09
+const BOUNCE_SWITCH_COOLDOWN_MS = 120
 
 function isMediaDebugEnabled() {
   if (!import.meta.env.DEV) {
     return false
   }
   try {
-    return window.localStorage?.getItem('scalez-debug-media') === '1'
+    const value = window.localStorage?.getItem('scalez-debug-media')
+    if (value == null) {
+      return true
+    }
+    return value !== '0'
   } catch {
-    return false
+    return true
   }
 }
 
@@ -195,15 +204,19 @@ export default function OutputPreview({
   markSlotFailed,
   enablePreload = true,
 }) {
+  const previewRef = useRef(null)
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
   const srcLogRef = useRef({})
   const canPlayLogRef = useRef({})
   const [, setBounceRenderVersion] = useState(0)
+  const [strobeFlash, setStrobeFlash] = useState({ key: 0, opacity: 0 })
   const playAttemptRef = useRef({})
   const playRejectLogRef = useRef({})
   const successfulCanPlayRef = useRef({})
   const bounceCanPlaySeekRef = useRef({})
+  const strobeTimeoutRef = useRef(null)
+  const lastStrobeLevelRef = useRef(0)
 
   const refreshBounceRender = () => {
     setBounceRenderVersion((version) => version + 1)
@@ -235,6 +248,7 @@ export default function OutputPreview({
   const reverseClipRebuildAttemptsRef = useRef({})
   const forwardRecoverAttemptsRef = useRef({})
   const forwardRecoverLastAtRef = useRef({})
+  const lastBounceSwitchAtRef = useRef({})
   const reverseCooldownUntilRef = useRef({})
   const lastBounceEnabledRef = useRef({})
   const latestLayersRef = useRef(layers)
@@ -265,6 +279,75 @@ export default function OutputPreview({
     latestBassRef.current = bassLevel
     latestSpectrumRef.current = spectrumLevels
   }, [layers, bassLevel, spectrumLevels])
+
+  useEffect(() => {
+    const nextLevel = blackout ? 0 : Math.min(0.52, Math.pow(masterFx.strobe, 1.35) * 0.58)
+    const prevLevel = lastStrobeLevelRef.current
+    const activationThreshold = 0.02
+    const crossedUp = nextLevel > activationThreshold && prevLevel <= activationThreshold
+
+    if (strobeTimeoutRef.current) {
+      clearTimeout(strobeTimeoutRef.current)
+      strobeTimeoutRef.current = null
+    }
+
+    if (crossedUp) {
+      setStrobeFlash((current) => ({
+        key: current.key + 1,
+        opacity: nextLevel,
+      }))
+      strobeTimeoutRef.current = setTimeout(() => {
+        setStrobeFlash((current) => ({ ...current, opacity: 0 }))
+        strobeTimeoutRef.current = null
+      }, 180)
+    } else if (nextLevel <= activationThreshold) {
+      setStrobeFlash((current) => (current.opacity > 0 ? { ...current, opacity: 0 } : current))
+    }
+
+    lastStrobeLevelRef.current = nextLevel
+
+    return () => {
+      if (strobeTimeoutRef.current) {
+        clearTimeout(strobeTimeoutRef.current)
+        strobeTimeoutRef.current = null
+      }
+    }
+  }, [masterFx.strobe, blackout])
+
+  useEffect(() => {
+    const previewEl = previewRef.current
+    if (!previewEl) {
+      return undefined
+    }
+
+    let frameId = null
+    const shakeAmount = Math.max(0, Number(masterFx?.shake ?? 0))
+
+    if (shakeAmount <= 0.08) {
+      previewEl.style.setProperty('--shake-x', '0px')
+      previewEl.style.setProperty('--shake-y', '0px')
+      return undefined
+    }
+
+    const amplitude = shakeAmount * 5.5
+    const tick = (timestamp) => {
+      const t = timestamp / 1000
+      const offsetX = (Math.sin(t * 38) + Math.sin(t * 61 + 0.8) * 0.45) * amplitude * 0.72
+      const offsetY = (Math.cos(t * 33 + 0.4) + Math.sin(t * 57 + 1.7) * 0.4) * amplitude * 0.68
+      previewEl.style.setProperty('--shake-x', `${offsetX.toFixed(2)}px`)
+      previewEl.style.setProperty('--shake-y', `${offsetY.toFixed(2)}px`)
+      frameId = requestAnimationFrame(tick)
+    }
+
+    frameId = requestAnimationFrame(tick)
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId)
+      }
+      previewEl.style.setProperty('--shake-x', '0px')
+      previewEl.style.setProperty('--shake-y', '0px')
+    }
+  }, [masterFx?.shake])
 
   // Apply per-layer timeline range and audio-reactive playback motion.
   useEffect(() => {
@@ -312,7 +395,17 @@ export default function OutputPreview({
         video.currentTime = segmentStart
       }
 
-      if (video.currentTime < segmentStart || video.currentTime > segmentEnd) {
+      if (bounceEnabled) {
+        // In reverse phase the reverse clip plays in a mirrored time range.
+        // Use phase-aware bounds so we never seek the reverse clip to a
+        // forward-range position, which would blank the video on in/out adjustments.
+        const bouncePhase = bouncePhaseRef.current[layer.layerIndex] || 'forward'
+        const bounceBounds = getBounceSegmentBounds(video, motion, bouncePhase) || segment
+        if (video.currentTime < bounceBounds.start || video.currentTime > bounceBounds.end) {
+          video.currentTime = bounceBounds.start
+          tryResumeVideo(video)
+        }
+      } else if (video.currentTime < segmentStart || video.currentTime > segmentEnd) {
         video.currentTime = segmentStart
       }
 
@@ -402,6 +495,19 @@ export default function OutputPreview({
         const reverseCooldownUntil = reverseCooldownUntilRef.current[requestKey] || 0
         if (Date.now() < reverseCooldownUntil) {
           continue
+        }
+
+        const cachedReversePath = reverseClipPathRef.current[requestKey]
+        if (cachedReversePath) {
+          const exists = await window.scalezApi?.pathExists?.(cachedReversePath)
+          if (exists === false) {
+            // Reverse cache file went missing (deleted/moved). Drop stale path and rebuild.
+            delete reverseClipPathRef.current[requestKey]
+            delete reverseClipRebuildAttemptsRef.current[requestKey]
+            refreshBounceRender()
+          } else {
+            continue
+          }
         }
 
         if (reverseClipPathRef.current[requestKey] || reverseClipRequestRef.current[requestKey]) {
@@ -752,6 +858,80 @@ export default function OutputPreview({
     }
   }
 
+  function maybeAdvanceBouncePhase(layerIndex, filePath, motion, video) {
+    const segment = getSegmentBounds(video, motion || {})
+    if (!segment) {
+      return false
+    }
+
+    const bounceEnabled = Boolean(motion?.bounceEnabled)
+    if (!bounceEnabled) {
+      return false
+    }
+
+    const bouncePhase = bouncePhaseRef.current[layerIndex] || 'forward'
+    const reversePath = reverseClipPathRef.current[getBounceClipKey(filePath)]
+    const reverseSegment = getBounceSegmentBounds(video, motion || {}, 'reverse')
+    const forwardBoundary = Math.max(segment.start, segment.end - BOUNCE_BROWSER_EPSILON_SECONDS)
+    const reverseBoundary = reverseSegment
+      ? Math.max(reverseSegment.start, reverseSegment.end - BOUNCE_BROWSER_EPSILON_SECONDS)
+      : null
+
+    // Guard against invalid or very small segments (could happen during clip transition).
+    // Don't seek if the segment is suspiciously tiny.
+    if (segment.length < 0.02 || (reverseSegment && reverseSegment.length < 0.02)) {
+      return false
+    }
+
+    if (bouncePhase === 'forward' && video.currentTime < segment.start) {
+      // Only seek if video is actually playing or paused in a normal state.
+      // Skip if video is buffering or in an error state.
+      if (video.readyState >= 2) {
+        video.currentTime = segment.start
+      }
+    }
+    if (bouncePhase === 'reverse' && reverseSegment && video.currentTime < reverseSegment.start) {
+      if (video.readyState >= 2) {
+        video.currentTime = reverseSegment.start
+      }
+    }
+
+    const switchKey = `${layerIndex}-${filePath || 'no-file'}`
+    const now = performance.now()
+    const lastSwitchAt = lastBounceSwitchAtRef.current[switchKey] || 0
+    const canSwitch = now - lastSwitchAt >= BOUNCE_SWITCH_COOLDOWN_MS
+
+    if (!canSwitch) {
+      return false
+    }
+
+    if (bouncePhase === 'forward' && video.currentTime >= forwardBoundary) {
+      if (!reversePath) {
+        video.currentTime = segment.start
+        tryResumeVideo(video)
+        return true
+      }
+      lastBounceSwitchAtRef.current[switchKey] = now
+      bouncePhaseRef.current[layerIndex] = 'reverse'
+      refreshBounceRender()
+      return true
+    }
+
+    if (
+      bouncePhase === 'reverse'
+      && reverseSegment
+      && reverseBoundary !== null
+      && video.currentTime >= reverseBoundary
+    ) {
+      lastBounceSwitchAtRef.current[switchKey] = now
+      bouncePhaseRef.current[layerIndex] = 'forward'
+      refreshBounceRender()
+      return true
+    }
+
+    return false
+  }
+
   const handleVideoTimeUpdate = (layerIndex, slotIndex, filePath, motion, event) => {
     const video = event.currentTarget
     const segment = getSegmentBounds(video, motion || {})
@@ -762,28 +942,8 @@ export default function OutputPreview({
     const bounceEnabled = Boolean(motion?.bounceEnabled)
     const timelineDriven = (motion?.timelineAmount ?? 0) > 0
     if (bounceEnabled) {
-      const bouncePhase = bouncePhaseRef.current[layerIndex] || 'forward'
-      const reversePath = reverseClipPathRef.current[getBounceClipKey(filePath)]
-      const reverseSegment = getBounceSegmentBounds(video, motion || {}, 'reverse')
-
-      if (bouncePhase === 'forward' && video.currentTime < segment.start) {
-        video.currentTime = segment.start
-      }
-      if (bouncePhase === 'reverse' && reverseSegment && video.currentTime < reverseSegment.start) {
-        video.currentTime = reverseSegment.start
-      }
-
-      if (bouncePhase === 'forward' && video.currentTime >= segment.end) {
-        if (!reversePath) {
-          video.currentTime = segment.start
-          tryResumeVideo(video)
-          return
-        }
-        bouncePhaseRef.current[layerIndex] = 'reverse'
-        refreshBounceRender()
-      } else if (bouncePhase === 'reverse' && reverseSegment && video.currentTime >= reverseSegment.end) {
-        bouncePhaseRef.current[layerIndex] = 'forward'
-        refreshBounceRender()
+      if (maybeAdvanceBouncePhase(layerIndex, filePath, motion, video)) {
+        return
       }
       return
     }
@@ -797,6 +957,53 @@ export default function OutputPreview({
       tryResumeVideo(video)
     }
   }
+
+  // Watchdog: keep bounce switching even when media events become sparse or stall.
+  useEffect(() => {
+    let frameId = null
+
+    const tick = () => {
+      const currentLayers = latestLayersRef.current || []
+      currentLayers.forEach((layer) => {
+        const motion = layer?.videoMotion || {}
+        if (!motion?.bounceEnabled) {
+          return
+        }
+
+        const active =
+          typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
+        if (!active?.filePath || active.status !== 'loaded') {
+          return
+        }
+
+        const video = videoRefsRef.current[layer.layerIndex]
+        if (!video || Number.isNaN(video.duration) || !Number.isFinite(video.duration) || video.duration <= 0) {
+          return
+        }
+
+        // Verify video is still mounted in DOM (not stale after remount).
+        // Skip frame if video is not in document to avoid seeking stale references.
+        if (!document.contains(video)) {
+          return
+        }
+
+        maybeAdvanceBouncePhase(layer.layerIndex, active.filePath, motion, video)
+        
+        // After phase advance check, always ensure video is playing.
+        // This prevents freezes where the video gets paused after phase flip/remount.
+        tryResumeVideo(video)
+      })
+
+      frameId = requestAnimationFrame(tick)
+    }
+
+    frameId = requestAnimationFrame(tick)
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId)
+      }
+    }
+  }, [])
 
   const handleVideoEnded = (layerIndex, slotIndex, filePath, motion, event) => {
     const video = event.currentTarget
@@ -835,18 +1042,17 @@ export default function OutputPreview({
   )
 
   const glowStrength = Math.min(1, masterFx.glow + bassLevel * 0.1)
-  const strobeOpacity = blackout ? 0 : Math.min(0.52, Math.pow(masterFx.strobe, 1.35) * 0.58)
-  const strobeActive = strobeOpacity > 0.01
+  const strobeActive = strobeFlash.opacity > 0.01
 
   return (
     <section className="output-preview-wrap">
       <div
-        className={`output-preview ${masterFx.shake > 0.08 ? 'fx-shake' : ''}`}
+        ref={previewRef}
+        className="output-preview"
         role="img"
         aria-label="Live output preview"
         style={{
           filter: `brightness(${masterFx.brightness})`,
-          '--shake-px': `${(masterFx.shake * 5.5).toFixed(2)}px`,
           '--glow-px': `${(8 + glowStrength * 30).toFixed(2)}px`,
           '--glow-alpha': (0.1 + glowStrength * 0.2).toFixed(3),
         }}
@@ -871,6 +1077,7 @@ export default function OutputPreview({
                 style={{
                   opacity: layer.visible ? layer.opacity * 0.1 : 0,
                   mixBlendMode: blendModeToCss(layer.blendMode),
+                  transform: 'translate3d(var(--shake-x, 0px), var(--shake-y, 0px), 0)',
                 }}
               />
             )
@@ -938,7 +1145,7 @@ export default function OutputPreview({
               style={{
                 opacity: layer.opacity,
                 mixBlendMode: blendModeToCss(layer.blendMode),
-                transform: `scale(${layer.videoMotion?.scale ?? 1})`,
+                transform: `translate3d(var(--shake-x, 0px), var(--shake-y, 0px), 0) scale(${layer.videoMotion?.scale ?? 1})`,
                 transformOrigin: 'center center',
               }}
             />
@@ -956,8 +1163,9 @@ export default function OutputPreview({
 
         <div className="fx-glow-layer" />
         <div
-          className={`fx-strobe-layer ${strobeActive ? 'is-on' : ''}`}
-          style={{ opacity: strobeOpacity }}
+          key={`strobe-${strobeFlash.key}`}
+          className={`fx-strobe-layer ${strobeActive ? 'is-flash' : ''}`}
+          style={{ opacity: strobeFlash.opacity }}
         />
         <div className={`fx-blackout-layer ${blackout ? 'is-on' : ''}`} />
 

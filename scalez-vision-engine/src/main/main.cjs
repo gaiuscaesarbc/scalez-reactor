@@ -2,8 +2,8 @@ const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
-const { pathToFileURL } = require('node:url')
-const { app, BrowserWindow, ipcMain, protocol, net, session, dialog, screen } = require('electron')
+const { Readable } = require('node:stream')
+const { app, BrowserWindow, ipcMain, protocol, session, dialog, screen } = require('electron')
 const { NativePlaybackEngine } = require('./nativePlayback.cjs')
 
 protocol.registerSchemesAsPrivileged([
@@ -368,6 +368,15 @@ function getNativePlaybackEngine() {
     nativePlaybackEngine = new NativePlaybackEngine({
       ensureReverseCache,
       isDev,
+      onDiagnostic: (payload) => {
+        if (controlWindow && !controlWindow.isDestroyed()) {
+          controlWindow.webContents.send('native-playback:diagnostic', payload)
+        }
+        if (isDev) {
+          const message = payload?.type || 'unknown'
+          console.warn(`[native:diagnostic] ${message}`)
+        }
+      },
     })
   }
   return nativePlaybackEngine
@@ -375,6 +384,14 @@ function getNativePlaybackEngine() {
 
 function buildNativePlaybackSignature(state) {
   const layers = Array.isArray(state?.layers) ? state.layers : []
+  const masterFx = state?.masterFx || {}
+  const blackout = state?.blackout ? 1 : 0
+  const fxSignature = [
+    Number(masterFx?.brightness ?? 1).toFixed(3),
+    Number(masterFx?.strobe ?? 0).toFixed(3),
+    Number(masterFx?.shake ?? 0).toFixed(3),
+    blackout,
+  ].join(':')
   return layers
     .map((layer) => {
       const activeSlotIndex = typeof layer?.activeSlotIndex === 'number' ? layer.activeSlotIndex : -1
@@ -383,15 +400,18 @@ function buildNativePlaybackSignature(state) {
       return [
         layer?.layerIndex ?? -1,
         layer?.visible ? 1 : 0,
+        activeSlotIndex,
+        activeSlot?.slotIndex ?? -1,
         activeSlot?.filePath || '',
         Number(motion.inPoint ?? 0).toFixed(3),
         Number(motion.outPoint ?? 1).toFixed(3),
         motion.bounceEnabled ? 1 : 0,
         Number(motion.bounceSpeed ?? 1).toFixed(3),
         Number(motion.baseSpeed ?? 1).toFixed(3),
+        Number(motion.scale ?? 1).toFixed(3),
       ].join(':')
     })
-    .join('|')
+    .join('|') + `|fx:${fxSignature}`
 }
 
 function createControlWindow() {
@@ -504,8 +524,39 @@ function registerIpcHandlers() {
   ipcMain.handle('app:open-devtools', (_event) => {
     const win = BrowserWindow.fromWebContents(_event.sender)
     if (win) {
-      win.webContents.openDevTools({ mode: 'detach' })
+      win.webContents.openDevTools({ mode: 'undocked', activate: true })
+      win.webContents.executeJavaScript(
+        "console.info('[devtools:opened]', { windowId: window.location.search || 'control', at: Date.now() })",
+      ).catch(() => {
+        // Ignore logging failures if renderer is navigating.
+      })
     }
+  })
+
+  ipcMain.handle('app:open-control-devtools', () => {
+    if (!controlWindow || controlWindow.isDestroyed()) {
+      return false
+    }
+    controlWindow.webContents.openDevTools({ mode: 'undocked', activate: true })
+    controlWindow.webContents.executeJavaScript(
+      "console.info('[devtools:opened:control]', { at: Date.now() })",
+    ).catch(() => {
+      // Ignore logging failures during navigation.
+    })
+    return true
+  })
+
+  ipcMain.handle('app:open-output-devtools', () => {
+    if (!outputWindow || outputWindow.isDestroyed()) {
+      return false
+    }
+    outputWindow.webContents.openDevTools({ mode: 'undocked', activate: true })
+    outputWindow.webContents.executeJavaScript(
+      "console.info('[devtools:opened:output]', { at: Date.now() })",
+    ).catch(() => {
+      // Ignore logging failures during navigation.
+    })
+    return true
   })
 
   ipcMain.handle('clips:pick-video', async () => {
@@ -615,6 +666,22 @@ function isAllowedOrigin(origin) {
   return false
 }
 
+function isAllowedWebContentsUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return false
+  }
+  if (rawUrl.startsWith('http://localhost:5173') || rawUrl.startsWith('http://127.0.0.1:5173')) {
+    return true
+  }
+  if (rawUrl.startsWith('file://')) {
+    return true
+  }
+  if (isDev && rawUrl.startsWith(devServerUrl)) {
+    return true
+  }
+  return false
+}
+
 function getOriginFromUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string') {
     return ''
@@ -627,6 +694,13 @@ function getOriginFromUrl(rawUrl) {
   } catch {
     return ''
   }
+}
+
+function resolveRequestingOrigin(webContents, requestingOrigin) {
+  if (requestingOrigin && typeof requestingOrigin === 'string') {
+    return requestingOrigin
+  }
+  return getOriginFromUrl(webContents?.getURL?.())
 }
 
 function isMicPermission(permission) {
@@ -644,22 +718,26 @@ function registerPermissionHandlers() {
   }
 
   defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    const requestingOrigin = details?.requestingOrigin || getOriginFromUrl(webContents?.getURL?.())
-    const allowMic = isMicPermission(permission) && isAllowedOrigin(requestingOrigin)
-    const allowMidi = isMidiPermission(permission) && isAllowedOrigin(requestingOrigin)
+    const requestingOrigin = resolveRequestingOrigin(webContents, details?.requestingOrigin)
+    const allowFromOrigin = isAllowedOrigin(requestingOrigin)
+    const allowFromWebContents = isAllowedWebContentsUrl(webContents?.getURL?.())
+    const allowMic = isMicPermission(permission) && (allowFromOrigin || allowFromWebContents)
+    const allowMidi = isMidiPermission(permission) && (allowFromOrigin || allowFromWebContents)
     const allow = allowMic || allowMidi
-    if (isDev && (isMicPermission(permission) || isMidiPermission(permission))) {
+    if (isDev && (isMicPermission(permission) || isMidiPermission(permission)) && !allow) {
       console.log(`[perm:req] permission=${permission} origin=${requestingOrigin || 'n/a'} allow=${allow}`)
     }
     callback(allow)
   })
 
   defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-    const origin = requestingOrigin || getOriginFromUrl(webContents?.getURL?.())
-    const allowMic = isMicPermission(permission) && isAllowedOrigin(origin)
-    const allowMidi = isMidiPermission(permission) && isAllowedOrigin(origin)
+    const origin = resolveRequestingOrigin(webContents, requestingOrigin)
+    const allowFromOrigin = isAllowedOrigin(origin)
+    const allowFromWebContents = isAllowedWebContentsUrl(webContents?.getURL?.())
+    const allowMic = isMicPermission(permission) && (allowFromOrigin || allowFromWebContents)
+    const allowMidi = isMidiPermission(permission) && (allowFromOrigin || allowFromWebContents)
     const allow = allowMic || allowMidi
-    if (isDev && (isMicPermission(permission) || isMidiPermission(permission))) {
+    if (isDev && (isMicPermission(permission) || isMidiPermission(permission)) && !allow) {
       console.log(`[perm:chk] permission=${permission} origin=${origin || 'n/a'} allow=${allow}`)
     }
     return allow
@@ -676,7 +754,102 @@ function registerMediaProtocol() {
       return new Response('Not Found', { status: 404 })
     }
 
-    return net.fetch(pathToFileURL(filePath).toString())
+    let fileStat
+    try {
+      fileStat = fs.statSync(filePath)
+    } catch {
+      return new Response('Not Found', { status: 404 })
+    }
+
+    const fileSize = Number(fileStat.size) || 0
+    const ext = path.extname(filePath).toLowerCase()
+    const mimeByExt = {
+      '.mp4': 'video/mp4',
+      '.m4v': 'video/mp4',
+      '.webm': 'video/webm',
+      '.mov': 'video/quicktime',
+      '.mkv': 'video/x-matroska',
+      '.avi': 'video/x-msvideo',
+      '.ogv': 'video/ogg',
+      '.ogg': 'video/ogg',
+    }
+    const contentType = mimeByExt[ext] || 'application/octet-stream'
+
+    const rangeHeader = request.headers.get('Range')
+    if (!rangeHeader) {
+      const stream = Readable.toWeb(fs.createReadStream(filePath))
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(fileSize),
+          'Accept-Ranges': 'bytes',
+        },
+      })
+    }
+
+    const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim())
+    if (!match) {
+      return new Response('Requested Range Not Satisfiable', {
+        status: 416,
+        headers: {
+          'Content-Range': `bytes */${fileSize}`,
+        },
+      })
+    }
+
+    let start
+    let end
+    const startToken = match[1]
+    const endToken = match[2]
+
+    if (startToken === '' && endToken === '') {
+      return new Response('Requested Range Not Satisfiable', {
+        status: 416,
+        headers: {
+          'Content-Range': `bytes */${fileSize}`,
+        },
+      })
+    }
+
+    if (startToken === '') {
+      const suffixLength = Number.parseInt(endToken, 10)
+      if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+        return new Response('Requested Range Not Satisfiable', {
+          status: 416,
+          headers: {
+            'Content-Range': `bytes */${fileSize}`,
+          },
+        })
+      }
+      start = Math.max(0, fileSize - suffixLength)
+      end = Math.max(0, fileSize - 1)
+    } else {
+      start = Number.parseInt(startToken, 10)
+      end = endToken === '' ? fileSize - 1 : Number.parseInt(endToken, 10)
+    }
+
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= fileSize) {
+      return new Response('Requested Range Not Satisfiable', {
+        status: 416,
+        headers: {
+          'Content-Range': `bytes */${fileSize}`,
+        },
+      })
+    }
+
+    end = Math.min(end, fileSize - 1)
+    const chunkSize = end - start + 1
+    const stream = Readable.toWeb(fs.createReadStream(filePath, { start, end }))
+    return new Response(stream, {
+      status: 206,
+      headers: {
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Content-Length': String(chunkSize),
+      },
+    })
   })
 }
 
@@ -687,6 +860,22 @@ app.whenReady().then(() => {
   getNativePlaybackEngine()
   createControlWindow()
   createOutputWindow()
+
+  // Tell the native engine where the output window is so mpv can be positioned underneath it.
+  if (outputWindow && !outputWindow.isDestroyed()) {
+    const engine = getNativePlaybackEngine()
+    engine.setOutputWindowBounds(outputWindow.getBounds())
+    outputWindow.on('move', () => {
+      if (outputWindow && !outputWindow.isDestroyed()) {
+        engine.setOutputWindowBounds(outputWindow.getBounds())
+      }
+    })
+    outputWindow.on('resize', () => {
+      if (outputWindow && !outputWindow.isDestroyed()) {
+        engine.setOutputWindowBounds(outputWindow.getBounds())
+      }
+    })
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

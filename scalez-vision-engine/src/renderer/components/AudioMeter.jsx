@@ -49,8 +49,11 @@ export default function AudioMeter({
 
       <div className="audio-spectrum-grid">
         {[
+          { key: 'sub', label: 'SUB' },
           { key: 'low', label: 'LOW' },
+          { key: 'lowMid', label: 'LOW MID' },
           { key: 'mid', label: 'MID' },
+          { key: 'presence', label: 'PRESENCE' },
           { key: 'high', label: 'HIGH' },
           { key: 'full', label: 'FULL' },
         ].map((band) => {

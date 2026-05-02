@@ -14,7 +14,15 @@ export function buildOutputState({ layers, masterFx, blackout, bassLevel = 0.2, 
     blackout,
     audio: {
       bassLevel,
-      spectrumLevels: spectrumLevels || { full: bassLevel, low: bassLevel, mid: 0, high: 0 },
+      spectrumLevels: spectrumLevels || {
+        full: bassLevel,
+        sub: bassLevel,
+        low: bassLevel,
+        lowMid: 0,
+        mid: 0,
+        presence: 0,
+        high: 0,
+      },
     },
     updatedAt: Date.now(),
   }

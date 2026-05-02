@@ -54,7 +54,10 @@ function getSpectrumSourceLevel(spectrumLevels, source) {
   if (!spectrumLevels) {
     return 0
   }
+  if (source === 'sub') return spectrumLevels.sub ?? spectrumLevels.low ?? 0
   if (source === 'mid') return spectrumLevels.mid ?? 0
+  if (source === 'lowMid') return spectrumLevels.lowMid ?? spectrumLevels.mid ?? 0
+  if (source === 'presence') return spectrumLevels.presence ?? spectrumLevels.high ?? 0
   if (source === 'high') return spectrumLevels.high ?? 0
   if (source === 'full') return spectrumLevels.full ?? 0
   return spectrumLevels.low ?? spectrumLevels.full ?? 0
@@ -91,54 +94,26 @@ function getWindowMode() {
 
 function OutputShell() {
   const syncedState = useOutputStateSubscription()
-  const [nativePlaybackStatus, setNativePlaybackStatus] = useState(null)
 
   useEffect(() => {
-    let disposed = false
-
-    const refresh = async () => {
-      try {
-        const status = await window.scalezApi?.getNativePlaybackStatus?.()
-        if (!disposed && status) {
-          setNativePlaybackStatus(status)
-        }
-      } catch {
-        // Native playback is optional.
-      }
-    }
-
-    void refresh()
-    const timer = setInterval(() => {
-      void refresh()
-    }, 1000)
-
-    return () => {
-      disposed = true
-      clearInterval(timer)
-    }
+    console.info('[devtools:output-shell-ready]', {
+      mode: 'output',
+      at: Date.now(),
+    })
   }, [])
 
   const layers = syncedState?.layers || []
   const masterFx = syncedState?.masterFx || DEFAULT_MASTER_FX
   const blackout = Boolean(syncedState?.blackout)
   const bassLevel = syncedState?.audio?.bassLevel ?? 0.2
-  const spectrumLevels = syncedState?.audio?.spectrumLevels || { full: bassLevel, low: bassLevel, mid: 0, high: 0 }
-
-  if (nativePlaybackStatus?.enabled) {
-    return (
-      <main className="output-shell">
-        <section className="output-preview-wrap">
-          <div className="output-preview" role="img" aria-label="Native playback active">
-            <div className="fallback-screen">
-              <div className="fallback-content">
-                <h1>NATIVE OUTPUT ACTIVE</h1>
-                <p>mpv window is driving playback outside Chromium.</p>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
-    )
+  const spectrumLevels = syncedState?.audio?.spectrumLevels || {
+    full: bassLevel,
+    sub: bassLevel,
+    low: bassLevel,
+    lowMid: 0,
+    mid: 0,
+    presence: 0,
+    high: 0,
   }
 
   return (
@@ -213,6 +188,13 @@ function ControlShell() {
   const [midiFlashSlots, setMidiFlashSlots] = useState(new Set())
   const fps = useFps()
   const sessionTimer = useSessionTimer()
+
+  useEffect(() => {
+    console.info('[devtools:control-shell-ready]', {
+      mode: 'control',
+      at: Date.now(),
+    })
+  }, [])
   // Scroll ref map: layerIndex → DOM element
   const scrollContainersRef = useRef({})
 
@@ -280,9 +262,8 @@ function ControlShell() {
           return
         }
 
-        const saved = window.localStorage.getItem('scalez-native-playback')
-        const shouldEnable = saved == null ? true : saved === '1'
-        const nextStatus = await window.scalezApi?.setNativePlaybackEnabled?.(shouldEnable)
+        // Browser compositor is the display path; keep native disabled by default.
+        const nextStatus = await window.scalezApi?.setNativePlaybackEnabled?.(false)
         if (!disposed && nextStatus) {
           setNativePlaybackStatus(nextStatus)
         }
@@ -294,6 +275,70 @@ function ControlShell() {
     void initNativePlayback()
     return () => {
       disposed = true
+    }
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = window.scalezApi?.onNativePlaybackDiagnostic?.((payload) => {
+      if (!payload) {
+        return
+      }
+      console.error('[bounce:bug-report]', payload)
+      try {
+        console.error('[bounce:bug-report:json]', JSON.stringify(payload))
+      } catch {
+        // Ignore JSON serialization failures for diagnostics.
+      }
+    })
+
+    console.info('[devtools:native-diagnostic-listener-ready]', {
+      at: Date.now(),
+    })
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe()
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return () => {}
+    }
+
+    let disposed = false
+    let lastSignature = ''
+
+    const poll = async () => {
+      try {
+        const status = await window.scalezApi?.getNativePlaybackStatus?.()
+        if (disposed || !status) {
+          return
+        }
+        const signature = [
+          status.enabled ? '1' : '0',
+          status.available ? '1' : '0',
+          status.running ? '1' : '0',
+          status.lastError || '',
+        ].join('|')
+        if (signature !== lastSignature) {
+          lastSignature = signature
+          console.info('[native:status]', status)
+        }
+      } catch {
+        // Ignore polling failures during reload.
+      }
+    }
+
+    void poll()
+    const timer = setInterval(() => {
+      void poll()
+    }, 1500)
+
+    return () => {
+      disposed = true
+      clearInterval(timer)
     }
   }, [])
 
@@ -831,21 +876,6 @@ function ControlShell() {
           </div>
         </div>
         <div className="header-actions">
-          <button
-            type="button"
-            className="devtools-btn"
-            onClick={handleToggleNativePlayback}
-            disabled={nativePlaybackBusy || !nativePlaybackStatus?.available}
-            title={
-              nativePlaybackStatus?.available
-                ? nativePlaybackStatus?.enabled
-                  ? 'Disable native mpv output engine'
-                  : 'Enable native mpv output engine'
-                : nativePlaybackStatus?.lastError || 'Native playback unavailable: install mpv'
-            }
-          >
-            Native {nativePlaybackStatus?.enabled ? 'ON' : 'OFF'}
-          </button>
           <MidiPanel midiState={midiState} />
           <ShowManager
             savedShows={savedShows}
@@ -929,6 +959,22 @@ function ControlShell() {
             title="Open DevTools for this window"
           >
             DevTools
+          </button>
+          <button
+            type="button"
+            className="pill"
+            onClick={() => window.scalezApi?.openControlDevTools?.()}
+            title="Open DevTools for Control window"
+          >
+            DevTools Control
+          </button>
+          <button
+            type="button"
+            className="pill"
+            onClick={() => window.scalezApi?.openOutputDevTools?.()}
+            title="Open DevTools for Output window"
+          >
+            DevTools Output
           </button>
         </div>
       </header>

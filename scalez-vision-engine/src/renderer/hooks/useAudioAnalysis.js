@@ -21,9 +21,13 @@ function isAudioDebugEnabled() {
     return false
   }
   try {
-    return window.localStorage?.getItem('scalez-debug-audio') === '1'
+    const value = window.localStorage?.getItem('scalez-debug-audio')
+    if (value == null) {
+      return true
+    }
+    return value !== '0'
   } catch {
-    return false
+    return true
   }
 }
 
@@ -50,14 +54,19 @@ async function requestMicrophoneStream() {
 }
 
 export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = { low: 1, mid: 1, high: 1 } }) {
-  const [bassLevel, setBassLevel] = useState(0)
-  const [spectrumLevels, setSpectrumLevels] = useState({
-    full: 0,
-    low: 0,
-    mid: 0,
-    high: 0,
+  const [audioFrame, setAudioFrame] = useState({
+    bassLevel: 0,
+    spectrumLevels: {
+      full: 0,
+      sub: 0,
+      low: 0,
+      lowMid: 0,
+      mid: 0,
+      presence: 0,
+      high: 0,
+    },
+    spectrumBins: [],
   })
-  const [spectrumBins, setSpectrumBins] = useState([])
   const [isActive, setIsActive] = useState(false)
   const [permissionDenied, setPermissionDenied] = useState(false)
   const [audioError, setAudioError] = useState('')
@@ -73,14 +82,64 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
   const perfInternalFramesRef = useRef(0)
   const perfUiPublishesRef = useRef(0)
   const smoothedBassRef = useRef(0)
-  const smoothedSpectrumRef = useRef({ full: 0, low: 0, mid: 0, high: 0 })
+  const smoothedSpectrumRef = useRef({ full: 0, sub: 0, low: 0, lowMid: 0, mid: 0, presence: 0, high: 0 })
   const smoothedBinsRef = useRef(null)
+  const lastPublishedAtRef = useRef(0)
   const eqGainsRef = useRef(eqGains)
   const isAnalyzingRef = useRef(false)
+  const startInFlightRef = useRef(false)
 
   const PERFORMANCE_MODE = true
   const UI_PUBLISH_FPS = PERFORMANCE_MODE ? 24 : 30
   const UI_PUBLISH_INTERVAL_MS = 1000 / UI_PUBLISH_FPS
+  const BIN_COUNT = PERFORMANCE_MODE ? 24 : 48
+
+  const getFrequencyRangeAverage = (dataArray, sampleRate, fftSize, minFrequency, maxFrequency) => {
+    if (!dataArray?.length || !sampleRate || !fftSize) {
+      return 0
+    }
+
+    const nyquist = sampleRate / 2
+    const binWidth = nyquist / dataArray.length
+    const startIndex = Math.max(0, Math.floor(minFrequency / binWidth))
+    const endIndex = Math.min(dataArray.length - 1, Math.max(startIndex, Math.floor(maxFrequency / binWidth)))
+
+    let weightedSum = 0
+    let weightTotal = 0
+    for (let index = startIndex; index <= endIndex; index += 1) {
+      const binCenter = (index + 0.5) * binWidth
+      const closeness = 1 - Math.min(1, Math.abs((binCenter - minFrequency) / Math.max(1, maxFrequency - minFrequency)))
+      const weight = 0.65 + Math.max(0, closeness) * 0.35
+      weightedSum += (dataArray[index] || 0) * weight
+      weightTotal += weight
+    }
+
+    return weightTotal > 0 ? weightedSum / weightTotal / 255 : 0
+  }
+
+  const downsampleBins = (bins, targetCount) => {
+    if (!bins || bins.length === 0 || targetCount <= 0) {
+      return []
+    }
+    if (bins.length <= targetCount) {
+      return Array.from(bins)
+    }
+
+    const output = new Array(targetCount)
+    const blockSize = bins.length / targetCount
+    for (let block = 0; block < targetCount; block += 1) {
+      const start = Math.floor(block * blockSize)
+      const end = Math.min(bins.length - 1, Math.floor((block + 1) * blockSize) - 1)
+      let sum = 0
+      let count = 0
+      for (let index = start; index <= end; index += 1) {
+        sum += bins[index] || 0
+        count += 1
+      }
+      output[block] = count > 0 ? sum / count : 0
+    }
+    return output
+  }
 
   useEffect(() => {
     eqGainsRef.current = eqGains
@@ -101,6 +160,11 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
   }
 
   const startAudio = async () => {
+    if (startInFlightRef.current) {
+      return
+    }
+    startInFlightRef.current = true
+
     try {
       setPermissionDenied(false)
       setAudioError('')
@@ -182,6 +246,8 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
       setPermissionDenied(errorName === 'NotAllowedError')
       setAudioError(friendlyMessage)
       setIsActive(false)
+    } finally {
+      startInFlightRef.current = false
     }
   }
 
@@ -206,11 +272,13 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
       }
     }
 
-    setBassLevel(0)
-    setSpectrumLevels({ full: 0, low: 0, mid: 0, high: 0 })
-    setSpectrumBins([])
+    setAudioFrame({
+      bassLevel: 0,
+      spectrumLevels: { full: 0, sub: 0, low: 0, lowMid: 0, mid: 0, presence: 0, high: 0 },
+      spectrumBins: [],
+    })
     smoothedBassRef.current = 0
-    smoothedSpectrumRef.current = { full: 0, low: 0, mid: 0, high: 0 }
+    smoothedSpectrumRef.current = { full: 0, sub: 0, low: 0, lowMid: 0, mid: 0, presence: 0, high: 0 }
     smoothedBinsRef.current = null
     setAudioError('')
     setIsActive(false)
@@ -232,49 +300,57 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
 
       const dataArray = dataArrayRef.current
       const lastIndex = dataArray.length - 1
-      const lowEnd = Math.max(1, Math.floor(lastIndex * 0.15))
-      const midStart = lowEnd + 1
-      const midEnd = Math.max(midStart, Math.floor(lastIndex * 0.45))
-      const highStart = midEnd + 1
-      const highEnd = Math.max(highStart, Math.floor(lastIndex * 0.9))
+      const sampleRate = analyzerRef.current.sampleRate || audioContextRef.current?.sampleRate || 44100
+      const fftSize = analyzerRef.current.fftSize || 128
+      const binWidth = (sampleRate / 2) / dataArray.length
+      const lowEnd = Math.max(1, Math.floor(180 / binWidth))
+      const midEnd = Math.max(lowEnd + 1, Math.floor(2000 / binWidth))
 
-      const averageRange = (start, end) => {
-        const safeStart = Math.max(0, start)
-        const safeEnd = Math.max(safeStart, Math.min(end, lastIndex))
-        let sum = 0
-        let count = 0
-        for (let index = safeStart; index <= safeEnd; index += 1) {
-          sum += dataArray[index]
-          count += 1
-        }
-        return count > 0 ? sum / count / 255 : 0
-      }
+      const rawSub = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 20, 70)
+      const rawLow = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 70, 180)
+      const rawLowMid = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 180, 450)
+      const rawMid = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 450, 2000)
+      const rawPresence = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 2000, 6000)
+      const rawHigh = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 6000, 14000)
+      const rawFull = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 20, 14000)
 
-      const rawLow = averageRange(0, lowEnd)
-      const rawMid = averageRange(midStart, midEnd)
-      const rawHigh = averageRange(highStart, highEnd)
-      const rawFull = averageRange(0, highEnd)
-
+      const gatedSub = applyNoiseFloor(rawSub, 0.055)
       const gatedLow = applyNoiseFloor(rawLow)
+      const gatedLowMid = applyNoiseFloor(rawLowMid, 0.04)
       const gatedMid = applyNoiseFloor(rawMid)
+      const gatedPresence = applyNoiseFloor(rawPresence, 0.035)
       const gatedHigh = applyNoiseFloor(rawHigh)
       const gatedFull = applyNoiseFloor(rawFull)
 
-      // Keep low-level input responsive: use sub-linear curves plus modest gain.
+      // Use narrower, frequency-based bands so bass does not stay hot because of broad mix energy.
+      const weightedSub =
+        Math.min(1, Math.pow(gatedSub, 0.96) * sensitivity * 1.35 * eqGainsRef.current.low)
       const weightedLow =
-        Math.min(1, Math.pow(gatedLow, 0.9) * sensitivity * 1.25 * eqGainsRef.current.low)
+        Math.min(1, Math.pow(gatedLow, 0.96) * sensitivity * 1.15 * eqGainsRef.current.low)
+      const weightedLowMid =
+        Math.min(1, Math.pow(gatedLowMid, 0.9) * sensitivity * 1.0 * eqGainsRef.current.mid)
       const weightedMid =
         Math.min(1, Math.pow(gatedMid, 0.9) * sensitivity * 1.1 * eqGainsRef.current.mid)
+      const weightedPresence =
+        Math.min(1, Math.pow(gatedPresence, 0.88) * sensitivity * 1.0 * eqGainsRef.current.high)
       const weightedHigh =
         Math.min(1, Math.pow(gatedHigh, 0.9) * sensitivity * 1.0 * eqGainsRef.current.high)
-      const weightedFull = (weightedLow + weightedMid + weightedHigh + gatedFull) / 4
+      const weightedFull = (
+        weightedSub
+        + weightedLow
+        + weightedLowMid
+        + weightedMid
+        + weightedPresence
+        + weightedHigh
+        + gatedFull
+      ) / 7
 
-      const rawBass = weightedLow
+      const rawBass = Math.max(0, weightedSub * 0.72 + weightedLow * 0.48 - weightedLowMid * 0.28)
 
       // Asymmetric envelope: keep attack smooth, but release quickly so effects
       // stop almost immediately when the music drops or cuts out.
       const attackSmoothing = Math.min(0.95, Math.max(0.1, smoothing))
-      const releaseSmoothing = Math.min(0.8, Math.max(0.05, smoothing * 0.35))
+      const releaseSmoothing = Math.min(0.72, Math.max(0.03, smoothing * 0.24))
       const bassSmoothing = rawBass < smoothedBassRef.current ? releaseSmoothing : attackSmoothing
       smoothedBassRef.current = smoothedBassRef.current * bassSmoothing + rawBass * (1 - bassSmoothing)
       const final = Math.min(1, smoothedBassRef.current)
@@ -285,8 +361,11 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
       }
 
       const nextSpectrum = {
+        sub: Math.min(1, getEnvelopeSmoothed(smoothedSpectrumRef.current.sub, weightedSub)),
         low: Math.min(1, getEnvelopeSmoothed(smoothedSpectrumRef.current.low, weightedLow)),
+        lowMid: Math.min(1, getEnvelopeSmoothed(smoothedSpectrumRef.current.lowMid, weightedLowMid)),
         mid: Math.min(1, getEnvelopeSmoothed(smoothedSpectrumRef.current.mid, weightedMid)),
+        presence: Math.min(1, getEnvelopeSmoothed(smoothedSpectrumRef.current.presence, weightedPresence)),
         high: Math.min(1, getEnvelopeSmoothed(smoothedSpectrumRef.current.high, weightedHigh)),
         full: Math.min(1, getEnvelopeSmoothed(smoothedSpectrumRef.current.full, weightedFull)),
       }
@@ -310,9 +389,17 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
       if (uiPublishTimerRef.current === 0 || now - uiPublishTimerRef.current >= UI_PUBLISH_INTERVAL_MS) {
         uiPublishTimerRef.current = now
         perfUiPublishesRef.current += 1
-        setBassLevel(final)
-        setSpectrumLevels(nextSpectrum)
-        setSpectrumBins(Array.from(smoothedBinsRef.current || []))
+
+        // Coalesce all audio UI state into one update to avoid render thrash.
+        const sampledBins = downsampleBins(smoothedBinsRef.current || [], BIN_COUNT)
+        if (now - lastPublishedAtRef.current >= UI_PUBLISH_INTERVAL_MS * 0.8) {
+          setAudioFrame({
+            bassLevel: final,
+            spectrumLevels: nextSpectrum,
+            spectrumBins: sampledBins,
+          })
+          lastPublishedAtRef.current = now
+        }
       }
 
       if (AUDIO_DEBUG) {
@@ -361,9 +448,9 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
   }, [])
 
   return {
-    bassLevel,
-    spectrumLevels,
-    spectrumBins,
+    bassLevel: audioFrame.bassLevel,
+    spectrumLevels: audioFrame.spectrumLevels,
+    spectrumBins: audioFrame.spectrumBins,
     isActive,
     permissionDenied,
     audioError,

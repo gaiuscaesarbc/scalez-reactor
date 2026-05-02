@@ -200,8 +200,11 @@ export default function MasterFxPanel({
                           audioPanel.onFxLinkChange?.(fx.key, 'source', event.target.value)
                         }
                       >
+                        <option value="sub">Sub</option>
                         <option value="low">Low</option>
+                        <option value="lowMid">Low Mid</option>
                         <option value="mid">Mid</option>
+                        <option value="presence">Presence</option>
                         <option value="high">High</option>
                         <option value="full">Full</option>
                       </select>

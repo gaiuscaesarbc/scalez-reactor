@@ -28,6 +28,36 @@ body {
     linear-gradient(150deg, var(--bg-b) 0%, var(--bg-a) 58%);
 }
 
+/* Output window is a transparent FX overlay over mpv — no background at all */
+body.output-window {
+  background: transparent !important;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+body.output-window #root {
+  background: transparent;
+}
+
+.output-fx-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.output-overlay-inner {
+  position: absolute;
+  inset: 0;
+}
+
+.fx-brightness-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 #root {
   min-height: 100vh;
 }
@@ -148,8 +178,8 @@ body {
   will-change: opacity;
 }
 
-.fx-strobe-layer.is-on {
-  animation: strobe-flash 220ms steps(2, end) infinite;
+.fx-strobe-layer.is-flash {
+  animation: strobe-flash 180ms ease-out 1 both;
 }
 
 .fx-blackout-layer {
@@ -160,10 +190,6 @@ body {
 
 .fx-blackout-layer.is-on {
   opacity: 1;
-}
-
-.output-preview.fx-shake {
-  animation: output-shake 130ms infinite;
 }
 
 .preview-overlays {
@@ -762,33 +788,19 @@ body {
   background: #000;
 }
 
+body.output-window .output-shell {
+  background: transparent !important;
+}
+
 @keyframes strobe-flash {
   0% {
     opacity: 0;
   }
-  45% {
-    opacity: 0.78;
+  22% {
+    opacity: 1;
   }
   100% {
     opacity: 0;
-  }
-}
-
-@keyframes output-shake {
-  0% {
-    transform: translate(0, 0);
-  }
-  25% {
-    transform: translate(var(--shake-px), calc(var(--shake-px) * -0.6));
-  }
-  50% {
-    transform: translate(calc(var(--shake-px) * -0.7), var(--shake-px));
-  }
-  75% {
-    transform: translate(calc(var(--shake-px) * 0.6), calc(var(--shake-px) * 0.5));
-  }
-  100% {
-    transform: translate(0, 0);
   }
 }
 

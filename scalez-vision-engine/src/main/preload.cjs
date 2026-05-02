@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('scalezApi', {
   setOutputFullscreen: (value) => ipcRenderer.invoke('output:set-fullscreen', value),
   getPlatform: () => ipcRenderer.invoke('app:get-platform'),
   openDevTools: () => ipcRenderer.invoke('app:open-devtools'),
+  openControlDevTools: () => ipcRenderer.invoke('app:open-control-devtools'),
+  openOutputDevTools: () => ipcRenderer.invoke('app:open-output-devtools'),
   pickVideoFile: () => ipcRenderer.invoke('clips:pick-video'),
   pathExists: (targetPath) => ipcRenderer.invoke('clips:path-exists', targetPath),
   ensureReverseCache: (targetPath) => ipcRenderer.invoke('clips:ensure-reverse-cache', targetPath),
@@ -20,6 +22,15 @@ contextBridge.exposeInMainWorld('scalezApi', {
   getOutputState: () => ipcRenderer.invoke('output:state-get'),
   getNativePlaybackStatus: () => ipcRenderer.invoke('native-playback:get-status'),
   setNativePlaybackEnabled: (enabled) => ipcRenderer.invoke('native-playback:set-enabled', enabled),
+  onNativePlaybackDiagnostic: (callback) => {
+    if (typeof callback !== 'function') {
+      return () => {}
+    }
+
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on('native-playback:diagnostic', handler)
+    return () => ipcRenderer.removeListener('native-playback:diagnostic', handler)
+  },
   onOutputStateUpdate: (callback) => {
     if (typeof callback !== 'function') {
       return () => {}

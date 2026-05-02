@@ -149,8 +149,11 @@ export default function LayerStrip({
                   value={audioLink.source || 'low'}
                   onChange={(event) => onAudioLinkChange?.(layer.layerIndex, 'source', event.target.value)}
                 >
+                  <option value="sub">Sub</option>
                   <option value="low">Low</option>
+                  <option value="lowMid">Low Mid</option>
                   <option value="mid">Mid</option>
+                  <option value="presence">Presence</option>
                   <option value="high">High</option>
                   <option value="full">Full</option>
                 </select>
@@ -236,8 +239,11 @@ export default function LayerStrip({
                     onVideoMotionChange?.(layer.layerIndex, 'scaleSource', event.target.value)
                   }
                 >
+                  <option value="sub">Sub</option>
                   <option value="low">Low</option>
+                  <option value="lowMid">Low Mid</option>
                   <option value="mid">Mid</option>
+                  <option value="presence">Presence</option>
                   <option value="high">High</option>
                   <option value="full">Full</option>
                 </select>
@@ -384,8 +390,11 @@ export default function LayerStrip({
                     onVideoMotionChange?.(layer.layerIndex, 'speedSource', event.target.value)
                   }
                 >
+                  <option value="sub">Sub</option>
                   <option value="low">Low</option>
+                  <option value="lowMid">Low Mid</option>
                   <option value="mid">Mid</option>
+                  <option value="presence">Presence</option>
                   <option value="high">High</option>
                   <option value="full">Full</option>
                 </select>
@@ -441,8 +450,11 @@ export default function LayerStrip({
                     onVideoMotionChange?.(layer.layerIndex, 'timelineSource', event.target.value)
                   }
                 >
+                  <option value="sub">Sub</option>
                   <option value="low">Low</option>
+                  <option value="lowMid">Low Mid</option>
                   <option value="mid">Mid</option>
+                  <option value="presence">Presence</option>
                   <option value="high">High</option>
                   <option value="full">Full</option>
                 </select>
