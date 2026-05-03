@@ -12,11 +12,26 @@ const METERS = [
 ]
 
 function StackedBar({ label, color, manual, energy, drop, max }) {
-  const manualPct = clamp(manual / max) * 100
-  const energyPct = clamp(energy / max) * 100
-  const dropPct   = clamp(drop   / max) * 100
+  const totalFill = clamp((manual + energy + drop) / max) * 100
   const totalVal  = clamp(manual + energy + drop, 0, max)
-  const totalPct  = clamp((manual + energy + drop) / max) * 100
+
+  // Gradient stops as percentages within the filled region
+  const manualShare  = totalFill > 0 ? clamp(manual / max) * 100 : 0
+  const energyEnd    = manualShare + clamp(energy / max) * 100
+  const dropEnd      = energyEnd   + clamp(drop   / max) * 100
+
+  // Build gradient: white -> blue -> purple, then transparent for unfilled
+  const gradient = totalFill > 0.1
+    ? `linear-gradient(to right,
+        rgba(255,255,255,0.55) 0%,
+        rgba(255,255,255,0.55) ${manualShare.toFixed(1)}%,
+        rgba(74,180,255,1) ${manualShare.toFixed(1)}%,
+        rgba(74,180,255,1) ${energyEnd.toFixed(1)}%,
+        rgba(221,102,255,1) ${energyEnd.toFixed(1)}%,
+        rgba(221,102,255,1) ${dropEnd.toFixed(1)}%,
+        transparent ${dropEnd.toFixed(1)}%
+      )`
+    : 'transparent'
 
   return (
     <div className="lfx-meter">
@@ -25,34 +40,14 @@ function StackedBar({ label, color, manual, energy, drop, max }) {
         <span className="lfx-meter__value" style={{ color }}>{totalVal.toFixed(2)}</span>
       </div>
       <div className="lfx-meter__track">
-        {manualPct > 0.1 && (
-          <div
-            className="lfx-seg lfx-seg--manual"
-            style={{ width: `${manualPct}%` }}
-            title={`Manual: ${manual.toFixed(2)}`}
-          />
-        )}
-        {energyPct > 0.1 && (
-          <div
-            className="lfx-seg lfx-seg--energy"
-            style={{ width: `${energyPct}%` }}
-            title={`Energy: ${energy.toFixed(2)}`}
-          />
-        )}
-        {dropPct > 0.1 && (
-          <div
-            className="lfx-seg lfx-seg--drop"
-            style={{ width: `${dropPct}%` }}
-            title={`Drop: ${drop.toFixed(2)}`}
-          />
-        )}
-        {totalPct > 5 && (
-          <div
-            className="lfx-meter__tip"
-            style={{ boxShadow: `0 0 6px ${color}` }}
-          />
-        )}
-        {totalPct >= 99 && (
+        <div
+          className="lfx-meter__fill"
+          style={{
+            width: `${totalFill.toFixed(1)}%`,
+            background: gradient,
+          }}
+        />
+        {totalFill >= 99 && (
           <span className="lfx-meter__clip">CLIP</span>
         )}
       </div>
