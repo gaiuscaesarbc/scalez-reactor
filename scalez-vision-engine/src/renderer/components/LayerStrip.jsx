@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, memo } from 'react'
 import { BLEND_MODES } from '../utils/blendModes'
 import ClipSlot from './ClipSlot'
 import BandPicker from './BandPicker'
+import QuickLaunchPad from './QuickLaunchPad'
 
 
 export default memo(function LayerStrip({
@@ -469,26 +470,29 @@ export default memo(function LayerStrip({
         )}
       </div>
 
-      <div
-        className="clip-grid-scroll"
-        ref={scrollContainerRef}
-        data-scroll-layer={layer.layerIndex}
-      >
-        <div className="clip-grid" role="list" aria-label={`${layer.label} clip slots`}>
-          {layer.slots.map((slot) => (
-            <ClipSlot
-              key={`${layer.layerIndex}-${slot.slotIndex}`}
-              layerIndex={layer.layerIndex}
-              slot={slot}
-              isActive={layer.activeSlotIndex === slot.slotIndex}
-              isMidiFlash={midiFlashSlots?.has(`${layer.layerIndex}-${slot.slotIndex}`) ?? false}
-              isCued={cueMode && cuedSlotIndex === slot.slotIndex}
-              cueMode={cueMode}
-              onTrigger={onTrigger}
-              onLoad={onLoad}
-            />
-          ))}
+      <div className="layer-right-col">
+        <div
+          className="clip-grid-scroll"
+          ref={scrollContainerRef}
+          data-scroll-layer={layer.layerIndex}
+        >
+          <div className="clip-grid" role="list" aria-label={`${layer.label} clip slots`}>
+            {layer.slots.map((slot) => (
+              <ClipSlot
+                key={`${layer.layerIndex}-${slot.slotIndex}`}
+                layerIndex={layer.layerIndex}
+                slot={slot}
+                isActive={layer.activeSlotIndex === slot.slotIndex}
+                isMidiFlash={midiFlashSlots?.has(`${layer.layerIndex}-${slot.slotIndex}`) ?? false}
+                isCued={cueMode && cuedSlotIndex === slot.slotIndex}
+                cueMode={cueMode}
+                onTrigger={onTrigger}
+                onLoad={onLoad}
+              />
+            ))}
+          </div>
         </div>
+        <QuickLaunchPad layer={layer} onTrigger={onTrigger} />
       </div>
     </section>
   )
