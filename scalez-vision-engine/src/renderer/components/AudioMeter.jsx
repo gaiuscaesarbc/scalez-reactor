@@ -1,4 +1,6 @@
-export default function AudioMeter({
+import { memo } from 'react'
+
+export default memo(function AudioMeter({
   bassLevel,
   spectrumLevels,
   spectrumBins,
@@ -7,30 +9,47 @@ export default function AudioMeter({
   audioError,
   sensitivity,
   smoothing,
+  noiseFloor,
+  preGain,
+  audioDevices = [],
+  selectedDeviceId = null,
+  onDeviceChange,
   onStartAudio,
   onStopAudio,
   onSensitivityChange,
   onSmoothingChange,
+  onNoiseFloorChange,
+  onPreGainChange,
   showControls = true,
   showSettings = true,
   showSpectrumBins = true,
 }) {
   const hasControlHandlers = Boolean(onStartAudio) && Boolean(onStopAudio)
   const canShowControls = showControls && hasControlHandlers
-  const canShowSettings = showSettings && canShowControls
 
   return (
     <div className="audio-meter-panel">
-      <div className="audio-meter">
-        <div className="audio-meter__label">BASS LEVEL</div>
-        <div className="audio-meter__track">
-          <div className="audio-meter__fill" style={{ width: `${Math.round(bassLevel * 100)}%` }} />
-        </div>
-        <div className="audio-meter__value">{bassLevel.toFixed(2)}</div>
-      </div>
 
+      {/* Device + start/stop row */}
       {canShowControls && (
         <div className="audio-controls">
+          {audioDevices.length > 0 && (
+            <label className="audio-setting">
+              <span>Input Device</span>
+              <select
+                value={selectedDeviceId ?? ''}
+                onChange={(e) => onDeviceChange?.(e.target.value || null)}
+                disabled={isAudioActive}
+              >
+                <option value="">Default</option>
+                {audioDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {audioError && (
             <div className="audio-error">
               {audioError}
@@ -47,6 +66,62 @@ export default function AudioMeter({
         </div>
       )}
 
+      {/* Always-visible input tuning controls */}
+      {showSettings && canShowControls && (
+        <div className="audio-settings">
+          {preGain !== undefined && (
+            <label className="audio-setting">
+              <span>Pre-Gain <strong>{preGain.toFixed(1)}×</strong></span>
+              <input
+                type="range" min="0.5" max="4.0" step="0.1"
+                value={preGain}
+                onChange={(e) => onPreGainChange?.(Number(e.target.value))}
+              />
+            </label>
+          )}
+          {noiseFloor !== undefined && (
+            <label className="audio-setting">
+              <span>Noise Floor <strong>{noiseFloor.toFixed(3)}</strong></span>
+              <input
+                type="range" min="0" max="0.12" step="0.005"
+                value={noiseFloor}
+                onChange={(e) => onNoiseFloorChange?.(Number(e.target.value))}
+              />
+            </label>
+          )}
+          {sensitivity !== undefined && (
+            <label className="audio-setting">
+              <span>Sensitivity <strong>{sensitivity.toFixed(2)}</strong></span>
+              <input
+                type="range" min="0.3" max="2.0" step="0.05"
+                value={sensitivity}
+                onChange={(e) => onSensitivityChange?.(Number(e.target.value))}
+              />
+            </label>
+          )}
+          {smoothing !== undefined && (
+            <label className="audio-setting">
+              <span>Smoothing <strong>{smoothing.toFixed(2)}</strong></span>
+              <input
+                type="range" min="0.1" max="0.95" step="0.01"
+                value={smoothing}
+                onChange={(e) => onSmoothingChange?.(Number(e.target.value))}
+              />
+            </label>
+          )}
+        </div>
+      )}
+
+      {/* Bass level meter */}
+      <div className="audio-meter">
+        <div className="audio-meter__label">BASS LEVEL</div>
+        <div className="audio-meter__track">
+          <div className="audio-meter__fill" style={{ width: `${Math.round(bassLevel * 100)}%` }} />
+        </div>
+        <div className="audio-meter__value">{bassLevel.toFixed(2)}</div>
+      </div>
+
+      {/* Per-band meters */}
       <div className="audio-spectrum-grid">
         {[
           { key: 'sub', label: 'SUB' },
@@ -70,6 +145,7 @@ export default function AudioMeter({
         })}
       </div>
 
+      {/* Full spectrum visualizer */}
       {showSpectrumBins ? (
         <div className="audio-spectrum-full">
           <div className="audio-meter__label">FULL SPECTRUM</div>
@@ -87,33 +163,6 @@ export default function AudioMeter({
           </div>
         </div>
       ) : null}
-
-      {canShowSettings && isAudioActive && sensitivity !== undefined && smoothing !== undefined ? (
-        <div className="audio-settings">
-          <label className="audio-setting">
-            <span>Sensitivity</span>
-            <input
-              type="range"
-              min="0.3"
-              max="1.5"
-              step="0.05"
-              value={sensitivity}
-              onChange={(e) => onSensitivityChange?.(Number(e.target.value))}
-            />
-          </label>
-          <label className="audio-setting">
-            <span>Smoothing</span>
-            <input
-              type="range"
-              min="0.2"
-              max="0.9"
-              step="0.01"
-              value={smoothing}
-              onChange={(e) => onSmoothingChange?.(Number(e.target.value))}
-            />
-          </label>
-        </div>
-      ) : null}
     </div>
   )
-}
+})

@@ -7,7 +7,18 @@ export const DEFAULT_MASTER_FX = {
   brightness: 1,
 }
 
-export function buildOutputState({ layers, masterFx, blackout, bassLevel = 0.2, spectrumLevels = null }) {
+export function buildOutputState({
+  layers,
+  masterFx,
+  blackout,
+  bassLevel = 0.2,
+  spectrumLevels = null,
+  energySystemEnabled = false,
+  smoothedEnergyFx = null,
+  energyStrobeCount = 0,
+  energyState = 'calm',
+  energyIntensity = 0,
+}) {
   return {
     layers,
     masterFx,
@@ -23,6 +34,13 @@ export function buildOutputState({ layers, masterFx, blackout, bassLevel = 0.2, 
         presence: 0,
         high: 0,
       },
+    },
+    energy: {
+      enabled: energySystemEnabled,
+      smoothedFx: smoothedEnergyFx || { glowBoost: 0, shakeIntensity: 0, brightnessBoost: 0 },
+      strobeCount: energyStrobeCount,
+      state: energyState,
+      intensity: energyIntensity,
     },
     updatedAt: Date.now(),
   }

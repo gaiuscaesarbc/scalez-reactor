@@ -529,6 +529,7 @@ export function useClipStore() {
         visible: layer.visible,
         opacity: layer.opacity,
         blendMode: layer.blendMode,
+        activeSlotIndex: layer.activeSlotIndex,
         slots: layer.slots.map((slot) => ({
           clipName: slot.clipName,
           filePath: slot.filePath,
@@ -552,6 +553,16 @@ export function useClipStore() {
 
   const autosaveShow = (midiMappings_, appSettings) => {
     const autosaveName = '__autosave__'
+    const existingAutosaveRaw = localStorage.getItem('scalez_autosave')
+    let existingAutosave = null
+    if (existingAutosaveRaw) {
+      try {
+        existingAutosave = JSON.parse(existingAutosaveRaw)
+      } catch {
+        existingAutosave = null
+      }
+    }
+
     const showData = {
       name: autosaveName,
       timestamp: new Date().toISOString(),
@@ -560,6 +571,7 @@ export function useClipStore() {
         visible: layer.visible,
         opacity: layer.opacity,
         blendMode: layer.blendMode,
+        activeSlotIndex: layer.activeSlotIndex,
         slots: layer.slots.map((slot) => ({
           clipName: slot.clipName,
           filePath: slot.filePath,
@@ -567,67 +579,22 @@ export function useClipStore() {
         })),
       })),
       midiMappings: midiMappings_ || midiMappings || {},
-      appSettings: appSettings || null,
+      appSettings:
+        appSettings != null
+          ? appSettings
+          : (existingAutosave?.appSettings ?? null),
     }
     localStorage.setItem('scalez_autosave', JSON.stringify(showData))
   }
 
-  const restoreLastShow = () => {
-    const lastShow = localStorage.getItem('scalez_last_show')
-    if (lastShow && lastShow !== '__autosave__') {
-      return loadShow(lastShow)
+  const applyShowData = (showData) => {
+    if (!showData || !Array.isArray(showData.layers)) {
+      return { ok: false, appSettings: null }
     }
-    const autosave = localStorage.getItem('scalez_autosave')
-    if (autosave) {
-      try {
-        const showData = JSON.parse(autosave)
-        updateLayers((current) =>
-          current.map((layer) => {
-            const showLayer = showData.layers.find((sl) => sl.label === layer.label)
-            if (!showLayer) return layer
-
-            const slots = layer.slots.map((slot, idx) => {
-              const showSlot = showLayer.slots[idx]
-              return showSlot
-                ? {
-                    ...slot,
-                    clipName: showSlot.clipName,
-                    filePath: showSlot.filePath,
-                    status: showSlot.status,
-                    errorMessage: '',
-                  }
-                : slot
-            })
-
-            return {
-              ...layer,
-              visible: showLayer.visible,
-              opacity: showLayer.opacity,
-              blendMode: showLayer.blendMode,
-              slots,
-            }
-          }),
-        )
-        if (showData.midiMappings) {
-          setMidiMappings(showData.midiMappings)
-        }
-        void revalidateImportedSlots(showData.layers)
-        return { ok: true, appSettings: showData.appSettings || null }
-      } catch (e) {
-        return { ok: false, appSettings: null }
-      }
-    }
-    return { ok: false, appSettings: null }
-  }
-
-  const loadShow = (showName) => {
-    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
-    const show = shows.find((s) => s.name === showName)
-    if (!show) return false
 
     updateLayers((current) =>
       current.map((layer) => {
-        const showLayer = show.layers.find((sl) => sl.label === layer.label)
+        const showLayer = showData.layers.find((sl) => sl.label === layer.label)
         if (!showLayer) return layer
 
         const slots = layer.slots.map((slot, idx) => {
@@ -648,17 +615,64 @@ export function useClipStore() {
           visible: showLayer.visible,
           opacity: showLayer.opacity,
           blendMode: showLayer.blendMode,
+          activeSlotIndex:
+            typeof showLayer.activeSlotIndex === 'number' ? showLayer.activeSlotIndex : null,
           slots,
         }
       }),
     )
-    if (show.midiMappings) {
-      setMidiMappings(show.midiMappings)
+
+    if (showData.midiMappings) {
+      setMidiMappings(showData.midiMappings)
     } else {
       setMidiMappings({})
     }
-    void revalidateImportedSlots(show.layers)
-    return { ok: true, appSettings: show.appSettings || null }
+
+    void revalidateImportedSlots(showData.layers)
+    return { ok: true, appSettings: showData.appSettings || null }
+  }
+
+  const restoreLastShow = () => {
+    const lastShowName = localStorage.getItem('scalez_last_show')
+    const autosaveRaw = localStorage.getItem('scalez_autosave')
+
+    let autosaveData = null
+    if (autosaveRaw) {
+      try {
+        autosaveData = JSON.parse(autosaveRaw)
+      } catch {
+        autosaveData = null
+      }
+    }
+
+    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
+    const lastShowData =
+      lastShowName && lastShowName !== '__autosave__'
+        ? shows.find((s) => s.name === lastShowName)
+        : null
+
+    const autosaveTs = autosaveData?.timestamp ? Date.parse(autosaveData.timestamp) : Number.NaN
+    const lastShowTs = lastShowData?.timestamp ? Date.parse(lastShowData.timestamp) : Number.NaN
+
+    // Load whichever snapshot is newest so startup reflects the latest saved state.
+    if (autosaveData && (Number.isNaN(lastShowTs) || autosaveTs >= lastShowTs)) {
+      return applyShowData(autosaveData)
+    }
+
+    if (lastShowData) {
+      return applyShowData(lastShowData)
+    }
+
+    return { ok: false, appSettings: null }
+  }
+
+  const loadShow = (showName) => {
+    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
+    const show = shows.find((s) => s.name === showName)
+    if (!show) return false
+
+    localStorage.setItem('scalez_last_show', showName)
+    return applyShowData(show)
   }
 
   const getSavedShows = () => {

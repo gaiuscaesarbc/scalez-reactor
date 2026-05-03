@@ -203,6 +203,12 @@ export default function OutputPreview({
   showOverlays,
   markSlotFailed,
   enablePreload = true,
+  energyState = 'calm',
+  energyIntensity = 0,
+  smoothedEnergyFx = {},
+  energyFxMapping = {},
+  energyStrobeCount = 0,
+  energySystemEnabled = false,
 }) {
   const previewRef = useRef(null)
   const videoRefsRef = useRef({})
@@ -215,7 +221,8 @@ export default function OutputPreview({
   const playRejectLogRef = useRef({})
   const successfulCanPlayRef = useRef({})
   const bounceCanPlaySeekRef = useRef({})
-  const strobeTimeoutRef = useRef(null)
+  const manualStrobeTimeoutRef = useRef(null)
+  const energyStrobeTimeoutRef = useRef(null)
   const lastStrobeLevelRef = useRef(0)
 
   const refreshBounceRender = () => {
@@ -286,9 +293,9 @@ export default function OutputPreview({
     const activationThreshold = 0.02
     const crossedUp = nextLevel > activationThreshold && prevLevel <= activationThreshold
 
-    if (strobeTimeoutRef.current) {
-      clearTimeout(strobeTimeoutRef.current)
-      strobeTimeoutRef.current = null
+    if (manualStrobeTimeoutRef.current) {
+      clearTimeout(manualStrobeTimeoutRef.current)
+      manualStrobeTimeoutRef.current = null
     }
 
     if (crossedUp) {
@@ -296,9 +303,9 @@ export default function OutputPreview({
         key: current.key + 1,
         opacity: nextLevel,
       }))
-      strobeTimeoutRef.current = setTimeout(() => {
+      manualStrobeTimeoutRef.current = setTimeout(() => {
         setStrobeFlash((current) => ({ ...current, opacity: 0 }))
-        strobeTimeoutRef.current = null
+        manualStrobeTimeoutRef.current = null
       }, 180)
     } else if (nextLevel <= activationThreshold) {
       setStrobeFlash((current) => (current.opacity > 0 ? { ...current, opacity: 0 } : current))
@@ -307,12 +314,39 @@ export default function OutputPreview({
     lastStrobeLevelRef.current = nextLevel
 
     return () => {
-      if (strobeTimeoutRef.current) {
-        clearTimeout(strobeTimeoutRef.current)
-        strobeTimeoutRef.current = null
+      if (manualStrobeTimeoutRef.current) {
+        clearTimeout(manualStrobeTimeoutRef.current)
+        manualStrobeTimeoutRef.current = null
       }
     }
   }, [masterFx.strobe, blackout])
+
+  useEffect(() => {
+    if (!energySystemEnabled || blackout || energyStrobeCount === 0) {
+      return
+    }
+
+    setStrobeFlash((current) => ({
+      key: current.key + 1,
+      opacity: 0.9,
+    }))
+
+    if (energyStrobeTimeoutRef.current) {
+      clearTimeout(energyStrobeTimeoutRef.current)
+    }
+
+    energyStrobeTimeoutRef.current = setTimeout(() => {
+      setStrobeFlash((current) => ({ ...current, opacity: 0 }))
+      energyStrobeTimeoutRef.current = null
+    }, 180)
+
+    return () => {
+      if (energyStrobeTimeoutRef.current) {
+        clearTimeout(energyStrobeTimeoutRef.current)
+        energyStrobeTimeoutRef.current = null
+      }
+    }
+  }, [energyStrobeCount, blackout, energySystemEnabled])
 
   useEffect(() => {
     const previewEl = previewRef.current
@@ -321,7 +355,9 @@ export default function OutputPreview({
     }
 
     let frameId = null
-    const shakeAmount = Math.max(0, Number(masterFx?.shake ?? 0))
+    // PART 3: Merge energy shake with manual shake
+    const energyShakeBoost = energySystemEnabled ? (smoothedEnergyFx?.shakeIntensity ?? 0) : 0
+    const shakeAmount = Math.max(0, Math.min(1.0, Number(masterFx?.shake ?? 0) + energyShakeBoost))
 
     if (shakeAmount <= 0.08) {
       previewEl.style.setProperty('--shake-x', '0px')
@@ -347,7 +383,7 @@ export default function OutputPreview({
       previewEl.style.setProperty('--shake-x', '0px')
       previewEl.style.setProperty('--shake-y', '0px')
     }
-  }, [masterFx?.shake])
+  }, [masterFx?.shake, smoothedEnergyFx?.shakeIntensity])
 
   // Apply per-layer timeline range and audio-reactive playback motion.
   useEffect(() => {
@@ -1041,7 +1077,13 @@ export default function OutputPreview({
     0,
   )
 
-  const glowStrength = Math.min(1, masterFx.glow + bassLevel * 0.1)
+    // PART 3: Merge energy FX with manual FX (additive, clamped).
+    // Energy boosts only apply when energy system is enabled; manual slider is always the base.
+    const energyGlowBoost = energySystemEnabled ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
+    const glowStrength = Math.min(1.5, masterFx.glow + energyGlowBoost)
+    const energyBrightnessBoost = energySystemEnabled ? (smoothedEnergyFx?.brightnessBoost ?? 0) : 0
+    const finalBrightness = Math.max(0.5, Math.min(1.5, masterFx.brightness + energyBrightnessBoost))
+
   const strobeActive = strobeFlash.opacity > 0.01
 
   return (
@@ -1052,7 +1094,7 @@ export default function OutputPreview({
         role="img"
         aria-label="Live output preview"
         style={{
-          filter: `brightness(${masterFx.brightness})`,
+           filter: `brightness(${finalBrightness})`,
           '--glow-px': `${(8 + glowStrength * 30).toFixed(2)}px`,
           '--glow-alpha': (0.1 + glowStrength * 0.2).toFixed(3),
         }}

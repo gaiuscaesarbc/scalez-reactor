@@ -33,9 +33,13 @@ function isAudioDebugEnabled() {
 
 const AUDIO_DEBUG = isAudioDebugEnabled()
 
-async function requestMicrophoneStream() {
+async function requestMicrophoneStream(deviceId) {
+  const audioConstraints = deviceId
+    ? { deviceId: { exact: deviceId } }
+    : true
+
   if (navigator.mediaDevices?.getUserMedia) {
-    return navigator.mediaDevices.getUserMedia({ audio: true })
+    return navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
   }
 
   const legacyGetUserMedia =
@@ -49,11 +53,25 @@ async function requestMicrophoneStream() {
   }
 
   return new Promise((resolve, reject) => {
-    legacyGetUserMedia.call(navigator, { audio: true }, resolve, reject)
+    legacyGetUserMedia.call(navigator, { audio: audioConstraints }, resolve, reject)
   })
 }
 
-export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = { low: 1, mid: 1, high: 1 } }) {
+async function enumerateAudioInputs() {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    return []
+  }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    return devices
+      .filter((d) => d.kind === 'audioinput')
+      .map((d) => ({ deviceId: d.deviceId, label: d.label || `Microphone ${d.deviceId.slice(0, 6)}` }))
+  } catch {
+    return []
+  }
+}
+
+export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = { low: 1, mid: 1, high: 1 }, deviceId = null, noiseFloor = 0.045, preGain = 1.0 }) {
   const [audioFrame, setAudioFrame] = useState({
     bassLevel: 0,
     spectrumLevels: {
@@ -86,13 +104,16 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
   const smoothedBinsRef = useRef(null)
   const lastPublishedAtRef = useRef(0)
   const eqGainsRef = useRef(eqGains)
+  const noiseFloorRef = useRef(noiseFloor)
+  const preGainRef = useRef(preGain)
   const isAnalyzingRef = useRef(false)
   const startInFlightRef = useRef(false)
+  const [audioDevices, setAudioDevices] = useState([])
 
   const PERFORMANCE_MODE = true
   const UI_PUBLISH_FPS = PERFORMANCE_MODE ? 24 : 30
   const UI_PUBLISH_INTERVAL_MS = 1000 / UI_PUBLISH_FPS
-  const BIN_COUNT = PERFORMANCE_MODE ? 24 : 48
+  const BIN_COUNT = PERFORMANCE_MODE ? 64 : 96
 
   const getFrequencyRangeAverage = (dataArray, sampleRate, fftSize, minFrequency, maxFrequency) => {
     if (!dataArray?.length || !sampleRate || !fftSize) {
@@ -146,6 +167,14 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
   }, [eqGains])
 
   useEffect(() => {
+    noiseFloorRef.current = noiseFloor
+  }, [noiseFloor])
+
+  useEffect(() => {
+    preGainRef.current = preGain
+  }, [preGain])
+
+  useEffect(() => {
     if (analyzerRef.current) {
       analyzerRef.current.smoothingTimeConstant = getAnalyzerSmoothingTimeConstant(smoothing)
     }
@@ -189,8 +218,11 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
         audioContextRef.current = new AudioContextClass()
       }
 
+      // Refresh device list once we have permission (labels become available after first grant).
+      enumerateAudioInputs().then((devs) => { if (devs.length) setAudioDevices(devs) }).catch(() => {})
+
       const audioContext = audioContextRef.current
-      const stream = await requestMicrophoneStream()
+      const stream = await requestMicrophoneStream(deviceId)
 
       if (audioContext.state === 'suspended') {
         await audioContext.resume()
@@ -202,7 +234,7 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
 
       if (!analyzerRef.current) {
         const analyzer = audioContext.createAnalyser()
-        analyzer.fftSize = PERFORMANCE_MODE ? 128 : 256
+        analyzer.fftSize = PERFORMANCE_MODE ? 256 : 512
         analyzer.smoothingTimeConstant = getAnalyzerSmoothingTimeConstant(smoothing)
         analyzerRef.current = analyzer
       }
@@ -306,21 +338,24 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
       const lowEnd = Math.max(1, Math.floor(180 / binWidth))
       const midEnd = Math.max(lowEnd + 1, Math.floor(2000 / binWidth))
 
-      const rawSub = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 20, 70)
-      const rawLow = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 70, 180)
-      const rawLowMid = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 180, 450)
-      const rawMid = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 450, 2000)
-      const rawPresence = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 2000, 6000)
-      const rawHigh = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 6000, 14000)
-      const rawFull = getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 20, 14000)
+      const pg = preGainRef.current
+      const nf = noiseFloorRef.current
 
-      const gatedSub = applyNoiseFloor(rawSub, 0.055)
-      const gatedLow = applyNoiseFloor(rawLow)
-      const gatedLowMid = applyNoiseFloor(rawLowMid, 0.04)
-      const gatedMid = applyNoiseFloor(rawMid)
-      const gatedPresence = applyNoiseFloor(rawPresence, 0.035)
-      const gatedHigh = applyNoiseFloor(rawHigh)
-      const gatedFull = applyNoiseFloor(rawFull)
+      const rawSub = Math.min(1, getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 20, 70) * pg)
+      const rawLow = Math.min(1, getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 70, 180) * pg)
+      const rawLowMid = Math.min(1, getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 180, 450) * pg)
+      const rawMid = Math.min(1, getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 450, 2000) * pg)
+      const rawPresence = Math.min(1, getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 2000, 6000) * pg)
+      const rawHigh = Math.min(1, getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 6000, 14000) * pg)
+      const rawFull = Math.min(1, getFrequencyRangeAverage(dataArray, sampleRate, fftSize, 20, 14000) * pg)
+
+      const gatedSub = applyNoiseFloor(rawSub, nf)
+      const gatedLow = applyNoiseFloor(rawLow, nf)
+      const gatedLowMid = applyNoiseFloor(rawLowMid, Math.max(0, nf - 0.005))
+      const gatedMid = applyNoiseFloor(rawMid, nf)
+      const gatedPresence = applyNoiseFloor(rawPresence, Math.max(0, nf - 0.01))
+      const gatedHigh = applyNoiseFloor(rawHigh, nf)
+      const gatedFull = applyNoiseFloor(rawFull, nf)
 
       // Use narrower, frequency-based bands so bass does not stay hot because of broad mix energy.
       const weightedSub =
@@ -447,6 +482,11 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
     }
   }, [])
 
+  // Enumerate devices on mount (labels may be empty until permission is granted).
+  useEffect(() => {
+    enumerateAudioInputs().then((devs) => { if (devs.length) setAudioDevices(devs) }).catch(() => {})
+  }, [])
+
   return {
     bassLevel: audioFrame.bassLevel,
     spectrumLevels: audioFrame.spectrumLevels,
@@ -454,6 +494,7 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
     isActive,
     permissionDenied,
     audioError,
+    audioDevices,
     startAudio,
     stopAudio,
   }

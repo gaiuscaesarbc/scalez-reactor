@@ -22,10 +22,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--text);
-  background:
-    radial-gradient(circle at 18% 14%, rgba(74, 180, 255, 0.18), transparent 36%),
-    radial-gradient(circle at 82% 88%, rgba(141, 109, 255, 0.2), transparent 38%),
-    linear-gradient(150deg, var(--bg-b) 0%, var(--bg-a) 58%);
+  background: #000;
 }
 
 /* Output window is a transparent FX overlay over mpv — no background at all */
@@ -136,10 +133,7 @@ body.output-window #root {
 .preview-backdrop {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at 30% 20%, rgba(74, 180, 255, 0.2), transparent 34%),
-    radial-gradient(circle at 70% 80%, rgba(255, 70, 109, 0.18), transparent 32%),
-    #020307;
+  background: #000;
 }
 
 .preview-layer-fallback {
@@ -380,6 +374,15 @@ body.output-window #root {
   letter-spacing: 0.06em;
   font-size: 0.68rem;
   background: linear-gradient(145deg, rgba(141, 109, 255, 0.26), rgba(74, 180, 255, 0.24));
+  overflow: hidden;
+}
+
+.clip-slot__thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 6px;
 }
 
 .clip-slot__name {
@@ -737,6 +740,8 @@ body.output-window #root {
 .bottom-panel__actions {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .pill.ghost {
@@ -778,6 +783,140 @@ body.output-window #root {
 .bottom-panel__note {
   margin: 0;
   color: var(--text-soft);
+}
+
+/* ── Band Picker ─────────────────────────────────────────── */
+.band-picker {
+  display: grid;
+  gap: 0;
+}
+
+.band-picker__toggle {
+  border-radius: 6px;
+}
+
+.band-picker__panel {
+  padding: 8px 6px 6px;
+  border: 1px solid rgba(74, 180, 255, 0.2);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  background: rgba(4, 8, 22, 0.55);
+  display: grid;
+  gap: 6px;
+}
+
+/* Mini live spectrum bars */
+.band-picker__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 40px;
+  padding: 0 2px;
+}
+
+.band-picker__bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.band-picker__bar-col--active .band-picker__bar-track {
+  background: rgba(74, 180, 255, 0.15);
+}
+
+.band-picker__bar-track {
+  width: 100%;
+  height: 100%;
+  background: rgba(74, 180, 255, 0.07);
+  border-radius: 2px 2px 0 0;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.band-picker__bar-fill {
+  width: 100%;
+  background: rgba(74, 180, 255, 0.5);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+  will-change: height;
+}
+
+.band-picker__bar-col--active .band-picker__bar-fill {
+  background: #4ab4ff;
+}
+
+/* Band select buttons */
+.band-picker__buttons {
+  display: flex;
+  gap: 3px;
+}
+
+.band-picker__btn {
+  flex: 1;
+  padding: 4px 2px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid rgba(74, 180, 255, 0.22);
+  border-radius: 4px;
+  background: rgba(74, 180, 255, 0.07);
+  color: #7a96c8;
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+
+.band-picker__btn:hover {
+  border-color: rgba(74, 180, 255, 0.55);
+  color: #dcf0ff;
+}
+
+.band-picker__btn--active {
+  background: rgba(74, 180, 255, 0.28);
+  border-color: #4ab4ff;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(74, 180, 255, 0.35);
+}
+
+/* Performance & Energy System badges (PART 6) */
+.energy-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(141, 109, 255, 0.3);
+  border: 1px solid rgba(141, 109, 255, 0.6);
+  color: #c9b8ff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.control-line.compact {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+.control-line.compact span {
+  min-width: 50px;
+  color: var(--text-soft);
+}
+
+.control-line.compact select {
+  font-size: 0.75rem;
+  padding: 2px 4px;
+}
+
+.energy-manual-intensity {
+  min-width: 160px;
+}
+
+.energy-manual-intensity input[type="range"] {
+  width: 100%;
 }
 
 .output-shell {
@@ -890,12 +1029,12 @@ body.output-window .output-shell {
 }
 
 .audio-spectrum-full__bars {
-  height: 84px;
+  height: 92px;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(2px, 1fr);
+  grid-auto-columns: minmax(1px, 1fr);
   align-items: end;
-  gap: 2px;
+  gap: 1px;
   padding: 4px;
   border-radius: 6px;
   background:
@@ -911,10 +1050,10 @@ body.output-window .output-shell {
 
 .audio-spectrum-full__bar {
   width: 100%;
-  min-height: 4px;
+  min-height: 3px;
   border-radius: 2px 2px 0 0;
   background: linear-gradient(180deg, rgba(126, 251, 181, 0.98), rgba(74, 180, 255, 0.95));
-  box-shadow: 0 0 6px rgba(74, 180, 255, 0.35);
+  box-shadow: 0 0 4px rgba(74, 180, 255, 0.28);
 }
 
 .audio-link-panel {

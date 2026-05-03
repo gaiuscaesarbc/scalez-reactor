@@ -5,6 +5,7 @@ import OutputPreview from './components/OutputPreview'
 import TestModePanel from './components/TestModePanel'
 import ShowManager from './components/ShowManager'
 import MidiPanel from './components/MidiPanel'
+import { EnergyDebugBadge } from './components/EnergyDebugBadge'
 import { useClipStore } from './hooks/useClipStore'
 import { useFps } from './hooks/useFps'
 import { useSessionTimer } from './hooks/useSessionTimer'
@@ -12,6 +13,12 @@ import { useAudioAnalysis } from './hooks/useAudioAnalysis'
 import { useHotkeys } from './hooks/useHotkeys'
 import { useMidiController } from './hooks/useMidiController'
 import { useTapTempo } from './hooks/useTapTempo'
+import { usePerformanceMode } from './hooks/usePerformanceMode'
+import { useEnergyState } from './hooks/useEnergyState'
+import { useEnergyFxMapping } from './hooks/useEnergyFxMapping'
+import { useEnergyFxSmoother } from './hooks/useEnergyFxSmoother'
+import { useClipVariation } from './hooks/useClipVariation'
+import { useAutoEvolution } from './hooks/useAutoEvolution'
 import {
   buildOutputState,
   DEFAULT_MASTER_FX,
@@ -62,6 +69,8 @@ function getSpectrumSourceLevel(spectrumLevels, source) {
   if (source === 'full') return spectrumLevels.full ?? 0
   return spectrumLevels.low ?? spectrumLevels.full ?? 0
 }
+
+const ENERGY_STATES = ['calm', 'build', 'drop', 'peak']
 
 function makeDefaultVideoMotion() {
   return {
@@ -115,6 +124,11 @@ function OutputShell() {
     presence: 0,
     high: 0,
   }
+  const energyEnabled = Boolean(syncedState?.energy?.enabled)
+  const smoothedEnergyFx = syncedState?.energy?.smoothedFx || null
+  const energyStrobeCount = syncedState?.energy?.strobeCount ?? 0
+  const energyState = syncedState?.energy?.state || 'calm'
+  const energyIntensity = syncedState?.energy?.intensity ?? 0
 
   return (
     <main className="output-shell">
@@ -127,6 +141,11 @@ function OutputShell() {
         blackout={blackout}
         showOverlays={false}
         enablePreload={false}
+        energySystemEnabled={energyEnabled}
+        smoothedEnergyFx={smoothedEnergyFx}
+        energyStrobeCount={energyStrobeCount}
+        energyState={energyState}
+        energyIntensity={energyIntensity}
       />
     </main>
   )
@@ -157,6 +176,9 @@ function ControlShell() {
   const [blackout, setBlackout] = useState(false)
   const [audioSensitivity, setAudioSensitivity] = useState(0.75)
   const [audioSmoothing, setAudioSmoothing] = useState(0.55)
+  const [audioNoiseFloor, setAudioNoiseFloor] = useState(0.02)
+  const [audioPreGain, setAudioPreGain] = useState(1.5)
+  const [audioDeviceId, setAudioDeviceId] = useState(null)
   const [audioEq, setAudioEq] = useState({ low: 1, mid: 1, high: 1 })
   const [audioFxLinks, setAudioFxLinks] = useState({
     glow: { amount: 0.35, threshold: 0.03, mode: 'normal', source: 'low' },
@@ -181,6 +203,20 @@ function ControlShell() {
   const [savedShows, setSavedShows] = useState([])
   const [nativePlaybackStatus, setNativePlaybackStatus] = useState(null)
   const [nativePlaybackBusy, setNativePlaybackBusy] = useState(false)
+
+  // Performance & Energy Systems (PART 1-5)
+  const performanceMode = usePerformanceMode()
+  const [energySystemEnabled, setEnergySystemEnabled] = useState(true)
+  const [energyManualOverrideEnabled, setEnergyManualOverrideEnabled] = useState(false)
+  const [manualEnergyState, setManualEnergyState] = useState('calm')
+  const [manualEnergyIntensity, setManualEnergyIntensity] = useState(0.35)
+  const [clipVariationEnabled, setClipVariationEnabled] = useState(false)
+  const [autoEvolutionEnabled, setAutoEvolutionEnabled] = useState(false)
+  const [autoEvolutionInterval, setAutoEvolutionInterval] = useState(60)
+
+    // Debug overlay toggle (PART 7)
+    const [showEnergyDebug, setShowEnergyDebug] = useState(false)
+
   // M9: performance control state
   const [focusedLayer, setFocusedLayer] = useState(null) // null | 0 | 1 | 2
   const [cueMode, setCueMode] = useState(false)
@@ -402,6 +438,22 @@ function ControlShell() {
           setSafeMode((current) => !current)
           break
 
+        case 'energy-manual-override':
+          setEnergyManualOverrideEnabled((current) => !current)
+          break
+
+        case 'energy-manual-state-next':
+          setManualEnergyState((current) => {
+            const index = ENERGY_STATES.indexOf(current)
+            const nextIndex = index >= 0 ? (index + 1) % ENERGY_STATES.length : 0
+            return ENERGY_STATES[nextIndex]
+          })
+          break
+
+        case 'energy-manual-intensity':
+          setManualEnergyIntensity(clamp01(midiValue / 127))
+          break
+
         case 'tap-tempo':
           tapTempo()
           break
@@ -563,24 +615,49 @@ function ControlShell() {
   const buildAppSettings = () => ({
     audioSensitivity,
     audioSmoothing,
+    audioNoiseFloor,
+    audioPreGain,
     audioEq,
     audioFxLinks,
     layerAudioLinks,
     layerVideoMotion,
     clipVideoMotion,
     masterFx,
+    // New Performance & Energy System settings (PART 7)
+    performanceModeEnabled: performanceMode.performanceModeEnabled,
+    energySystemEnabled,
+    energyManualOverrideEnabled,
+    manualEnergyState,
+    manualEnergyIntensity,
+    clipVariationEnabled,
+    autoEvolutionEnabled,
+    autoEvolutionInterval,
   })
 
   const applyAppSettings = (settings) => {
     if (!settings) return
     if (settings.audioSensitivity != null) setAudioSensitivity(settings.audioSensitivity)
     if (settings.audioSmoothing != null) setAudioSmoothing(settings.audioSmoothing)
+    if (settings.audioNoiseFloor != null) setAudioNoiseFloor(settings.audioNoiseFloor)
+    if (settings.audioPreGain != null) setAudioPreGain(settings.audioPreGain)
     if (settings.audioEq != null) setAudioEq(settings.audioEq)
     if (settings.audioFxLinks != null) setAudioFxLinks(settings.audioFxLinks)
     if (settings.layerAudioLinks != null) setLayerAudioLinks(settings.layerAudioLinks)
     if (settings.layerVideoMotion != null) setLayerVideoMotion(settings.layerVideoMotion)
     if (settings.clipVideoMotion != null) setClipVideoMotion(settings.clipVideoMotion)
     if (settings.masterFx != null) setMasterFx(settings.masterFx)
+    // Load new settings if available
+    if (settings.performanceModeEnabled != null)
+      performanceMode.setPerformanceModeEnabled(settings.performanceModeEnabled)
+    if (settings.energySystemEnabled != null) setEnergySystemEnabled(settings.energySystemEnabled)
+    if (settings.energyManualOverrideEnabled != null)
+      setEnergyManualOverrideEnabled(settings.energyManualOverrideEnabled)
+    if (settings.manualEnergyState) setManualEnergyState(settings.manualEnergyState)
+    if (settings.manualEnergyIntensity != null)
+      setManualEnergyIntensity(settings.manualEnergyIntensity)
+    if (settings.clipVariationEnabled != null) setClipVariationEnabled(settings.clipVariationEnabled)
+    if (settings.autoEvolutionEnabled != null) setAutoEvolutionEnabled(settings.autoEvolutionEnabled)
+    if (settings.autoEvolutionInterval != null) setAutoEvolutionInterval(settings.autoEvolutionInterval)
   }
 
   // Autosave MIDI mappings with show data
@@ -592,6 +669,10 @@ function ControlShell() {
     return () => clearInterval(autosaveInterval)
   }, [autosaveShow, midiState])
 
+  // Stable ref to current spectrumLevels — passed to BandPicker so it can animate
+  // bars via rAF without triggering LayerStrip memo invalidation.
+  const spectrumLevelsRef = useRef({})
+
   const {
     bassLevel,
     spectrumLevels,
@@ -599,12 +680,64 @@ function ControlShell() {
     isActive: audioActive,
     permissionDenied,
     audioError,
+    audioDevices,
     startAudio,
     stopAudio,
   } = useAudioAnalysis({
     sensitivity: audioSensitivity,
     smoothing: audioSmoothing,
     eqGains: audioEq,
+    deviceId: audioDeviceId,
+    noiseFloor: audioNoiseFloor,
+    preGain: audioPreGain,
+  })
+
+  // Keep spectrumLevelsRef in sync each audio frame
+  spectrumLevelsRef.current = spectrumLevels
+
+  // Energy System (PART 3)
+  const { energyState, energyIntensity, getEnergyFxRecommendation } = useEnergyState({
+    bassLevel,
+    spectrumLevels,
+    performanceMode: performanceMode.performanceModeEnabled,
+    enabled: energySystemEnabled,
+    safeMode,
+  })
+
+  const activeEnergyState = energyManualOverrideEnabled ? manualEnergyState : energyState
+  const activeEnergyIntensity = energyManualOverrideEnabled ? manualEnergyIntensity : energyIntensity
+
+    // Energy FX Mapping (PART 1-2): Convert energy state to FX values with strobe cooldown
+    const energyFxMapping = useEnergyFxMapping({
+      energyState: activeEnergyState,
+      energyIntensity: activeEnergyIntensity,
+      enabled: energySystemEnabled,
+      safeMode,
+      performanceMode: performanceMode.performanceModeEnabled,
+      subLevel: spectrumLevels.sub ?? 0,
+    })
+
+    // Energy FX Smoother (PART 4): Smooth transitions to prevent snapping
+    const smoothedEnergyFx = useEnergyFxSmoother({
+      glowBoost: energyFxMapping.glowBoost,
+      shakeIntensity: energyFxMapping.shakeIntensity,
+      brightnessBoost: energyFxMapping.brightnessBoost,
+      lerpFactor: 0.12,
+      enabled: energySystemEnabled,
+    })
+
+  // Clip Variation (PART 4)
+  const { applyVariationToMotion } = useClipVariation({ enabled: clipVariationEnabled })
+
+  // Auto Evolution (PART 5)
+  useAutoEvolution({
+    enabled: autoEvolutionEnabled,
+    intervalSeconds: autoEvolutionInterval,
+    layers,
+    masterFx,
+    onTriggerClip: triggerClip,
+    onSetLayerOpacity: setLayerOpacity,
+    onSetLayerBlendMode: setLayerBlendMode,
   })
 
   const displayLayers = useMemo(() => layers.slice().reverse(), [layers])
@@ -803,34 +936,42 @@ function ControlShell() {
 
   const effectiveMasterFx = useMemo(
     () => {
-      const glowSource = getSpectrumSourceLevel(spectrumLevels, audioFxLinks.glow.source)
-      const glowBoost = getReactiveAmount(
-        glowSource,
-        audioFxLinks.glow.threshold,
-        audioFxLinks.glow.mode,
-        audioFxLinks.glow.amount,
-      )
-      const strobeSource = getSpectrumSourceLevel(spectrumLevels, audioFxLinks.strobe.source)
-      const strobeBoost = getReactiveAmount(
-        strobeSource,
-        audioFxLinks.strobe.threshold,
-        audioFxLinks.strobe.mode,
-        audioFxLinks.strobe.amount,
-      )
-      const shakeSource = getSpectrumSourceLevel(spectrumLevels, audioFxLinks.shake.source)
-      const shakeBoost = getReactiveAmount(
-        shakeSource,
-        audioFxLinks.shake.threshold,
-        audioFxLinks.shake.mode,
-        audioFxLinks.shake.amount,
-      )
-      const brightnessSource = getSpectrumSourceLevel(spectrumLevels, audioFxLinks.brightness.source)
-      const brightnessBoost = getReactiveAmount(
-        brightnessSource,
-        audioFxLinks.brightness.threshold,
-        audioFxLinks.brightness.mode,
-        audioFxLinks.brightness.amount,
-      )
+      // When energy system is on, audio reactive links are silenced for the same
+      // FX channels (glow, strobe, shake, brightness) so they don't stack or fight.
+      const linksActive = !energySystemEnabled
+
+      const glowBoost = linksActive
+        ? getReactiveAmount(
+            getSpectrumSourceLevel(spectrumLevels, audioFxLinks.glow.source),
+            audioFxLinks.glow.threshold,
+            audioFxLinks.glow.mode,
+            audioFxLinks.glow.amount,
+          )
+        : 0
+      const strobeBoost = linksActive
+        ? getReactiveAmount(
+            getSpectrumSourceLevel(spectrumLevels, audioFxLinks.strobe.source),
+            audioFxLinks.strobe.threshold,
+            audioFxLinks.strobe.mode,
+            audioFxLinks.strobe.amount,
+          )
+        : 0
+      const shakeBoost = linksActive
+        ? getReactiveAmount(
+            getSpectrumSourceLevel(spectrumLevels, audioFxLinks.shake.source),
+            audioFxLinks.shake.threshold,
+            audioFxLinks.shake.mode,
+            audioFxLinks.shake.amount,
+          )
+        : 0
+      const brightnessBoost = linksActive
+        ? getReactiveAmount(
+            getSpectrumSourceLevel(spectrumLevels, audioFxLinks.brightness.source),
+            audioFxLinks.brightness.threshold,
+            audioFxLinks.brightness.mode,
+            audioFxLinks.brightness.amount,
+          )
+        : 0
 
       const base = {
         ...masterFx,
@@ -850,7 +991,7 @@ function ControlShell() {
       }
       return base
     },
-    [masterFx, spectrumLevels, audioFxLinks, safeMode],
+    [masterFx, spectrumLevels, audioFxLinks, safeMode, energySystemEnabled],
   )
 
   useEffect(() => {
@@ -860,9 +1001,14 @@ function ControlShell() {
       blackout,
       bassLevel,
       spectrumLevels,
+      energySystemEnabled,
+      smoothedEnergyFx,
+      energyStrobeCount: energyFxMapping.strobeCount,
+      energyState: activeEnergyState,
+      energyIntensity: activeEnergyIntensity,
     })
     window.scalezApi?.publishOutputState?.(nextState)
-  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels])
+  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels, energySystemEnabled, smoothedEnergyFx, energyFxMapping.strobeCount, activeEnergyState, activeEnergyIntensity])
 
   return (
     <main className={`control-shell${compactMode ? ' is-compact' : ''}`}>
@@ -990,6 +1136,12 @@ function ControlShell() {
         showOverlays
         markSlotFailed={markSlotFailed}
         enablePreload={false}
+          energyState={activeEnergyState}
+          energyIntensity={activeEnergyIntensity}
+          smoothedEnergyFx={smoothedEnergyFx}
+          energyFxMapping={energyFxMapping}
+          energyStrobeCount={energyFxMapping.strobeCount}
+          energySystemEnabled={energySystemEnabled}
       />
 
       {!hasAnyLoadedClip && (
@@ -1016,6 +1168,7 @@ function ControlShell() {
               key={layer.label}
               layer={layer}
               isFocused={focusedLayer === layer.layerIndex}
+              spectrumRef={spectrumLevelsRef}
               cueMode={cueMode}
               cuedSlotIndex={cuedSlots[layer.layerIndex] ?? null}
               midiFlashSlots={midiFlashSlots}
@@ -1046,6 +1199,25 @@ function ControlShell() {
         onReset={resetFx}
         safeMode={safeMode}
         onSafeModeChange={setSafeMode}
+        // Performance & Energy System props (PART 6)
+        performanceModeEnabled={performanceMode.performanceModeEnabled}
+        onPerformanceModeChange={performanceMode.setPerformanceModeEnabled}
+        energyState={activeEnergyState}
+        energyIntensity={activeEnergyIntensity}
+        energySystemEnabled={energySystemEnabled}
+        onEnergySystemChange={setEnergySystemEnabled}
+        energyManualOverrideEnabled={energyManualOverrideEnabled}
+        onEnergyManualOverrideChange={setEnergyManualOverrideEnabled}
+        manualEnergyState={manualEnergyState}
+        onManualEnergyStateChange={setManualEnergyState}
+        manualEnergyIntensity={manualEnergyIntensity}
+        onManualEnergyIntensityChange={setManualEnergyIntensity}
+        clipVariationEnabled={clipVariationEnabled}
+        onClipVariationChange={setClipVariationEnabled}
+        autoEvolutionEnabled={autoEvolutionEnabled}
+        onAutoEvolutionChange={setAutoEvolutionEnabled}
+        autoEvolutionInterval={autoEvolutionInterval}
+        onAutoEvolutionIntervalChange={setAutoEvolutionInterval}
         audioPanel={{
           bassLevel,
           spectrumLevels,
@@ -1057,12 +1229,20 @@ function ControlShell() {
           fxLinks: audioFxLinks,
           sensitivity: audioSensitivity,
           smoothing: audioSmoothing,
+          noiseFloor: audioNoiseFloor,
+          preGain: audioPreGain,
           onEqChange: setAudioEqValue,
           onFxLinkChange: setAudioFxLink,
+          audioDevices,
+          selectedDeviceId: audioDeviceId,
+          onDeviceChange: setAudioDeviceId,
           onStartAudio: startAudio,
           onStopAudio: stopAudio,
           onSensitivityChange: setAudioSensitivity,
           onSmoothingChange: setAudioSmoothing,
+          onNoiseFloorChange: setAudioNoiseFloor,
+          onPreGainChange: setAudioPreGain,
+          spectrumRef: spectrumLevelsRef,
         }}
       />
 

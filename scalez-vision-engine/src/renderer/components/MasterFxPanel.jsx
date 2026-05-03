@@ -1,4 +1,6 @@
+import { memo } from 'react'
 import AudioMeter from './AudioMeter'
+import BandPicker from './BandPicker'
 
 const FX_KEYS = [
   { key: 'glow', label: 'Glow', min: 0, max: 1, step: 0.01 },
@@ -14,7 +16,7 @@ const AUDIO_LINK_KEYS = [
   { key: 'brightness', label: 'Brightness' },
 ]
 
-export default function MasterFxPanel({
+export default memo(function MasterFxPanel({
   masterFx,
   blackout,
   onFxChange,
@@ -22,6 +24,25 @@ export default function MasterFxPanel({
   onReset,
   safeMode,
   onSafeModeChange,
+  // Performance & Energy System props (PART 6)
+  performanceModeEnabled = false,
+  onPerformanceModeChange,
+  energyState = 'calm',
+  energyIntensity = 0,
+  energySystemEnabled = true,
+  onEnergySystemChange,
+  energyManualOverrideEnabled = false,
+  onEnergyManualOverrideChange,
+  manualEnergyState = 'calm',
+  onManualEnergyStateChange,
+  manualEnergyIntensity = 0.35,
+  onManualEnergyIntensityChange,
+  clipVariationEnabled = false,
+  onClipVariationChange,
+  autoEvolutionEnabled = false,
+  onAutoEvolutionChange,
+  autoEvolutionInterval = 60,
+  onAutoEvolutionIntervalChange,
   audioPanel,
 }) {
   return (
@@ -40,6 +61,94 @@ export default function MasterFxPanel({
             />
             Safe Mode
           </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={performanceModeEnabled}
+              onChange={(event) => onPerformanceModeChange?.(event.target.checked)}
+            />
+            Perf Mode
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={energySystemEnabled}
+              onChange={(event) => onEnergySystemChange?.(event.target.checked)}
+            />
+            Energy
+          </label>
+          {energySystemEnabled && (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={energyManualOverrideEnabled}
+                onChange={(event) => onEnergyManualOverrideChange?.(event.target.checked)}
+              />
+              Energy Manual
+            </label>
+          )}
+          {energySystemEnabled && energyManualOverrideEnabled && (
+            <label className="control-line compact">
+              <span>State:</span>
+              <select
+                value={manualEnergyState}
+                onChange={(event) => onManualEnergyStateChange?.(event.target.value)}
+              >
+                <option value="calm">Calm</option>
+                <option value="build">Build</option>
+                <option value="drop">Drop</option>
+                <option value="peak">Peak</option>
+              </select>
+            </label>
+          )}
+          {energySystemEnabled && energyManualOverrideEnabled && (
+            <label className="control-line compact energy-manual-intensity">
+              <span>Energy:</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={manualEnergyIntensity}
+                onChange={(event) => onManualEnergyIntensityChange?.(Number(event.target.value))}
+              />
+            </label>
+          )}
+          {energySystemEnabled && (
+            <div className="energy-badge" title={`Energy State: ${energyState} (${Math.round(energyIntensity * 100)}%)`}>
+              {energyState.toUpperCase()}
+            </div>
+          )}
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={clipVariationEnabled}
+              onChange={(event) => onClipVariationChange?.(event.target.checked)}
+            />
+            Variation
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={autoEvolutionEnabled}
+              onChange={(event) => onAutoEvolutionChange?.(event.target.checked)}
+            />
+            Auto Evolve
+          </label>
+          {autoEvolutionEnabled && (
+            <label className="control-line compact">
+              <span>Interval:</span>
+              <select
+                value={autoEvolutionInterval}
+                onChange={(event) => onAutoEvolutionIntervalChange?.(Number(event.target.value))}
+              >
+                <option value={15}>15s</option>
+                <option value={30}>30s</option>
+                <option value={60}>60s</option>
+                <option value={120}>2m</option>
+              </select>
+            </label>
+          )}
           <button type="button" className="danger-pill" onClick={onToggleBlackout}>
             {blackout ? 'Disable Blackout' : 'Blackout'}
           </button>
@@ -83,10 +192,17 @@ export default function MasterFxPanel({
               audioError={audioPanel.audioError}
               sensitivity={audioPanel.sensitivity}
               smoothing={audioPanel.smoothing}
+              noiseFloor={audioPanel.noiseFloor}
+              preGain={audioPanel.preGain}
+              audioDevices={audioPanel.audioDevices}
+              selectedDeviceId={audioPanel.selectedDeviceId}
+              onDeviceChange={audioPanel.onDeviceChange}
               onStartAudio={audioPanel.onStartAudio}
               onStopAudio={audioPanel.onStopAudio}
               onSensitivityChange={audioPanel.onSensitivityChange}
               onSmoothingChange={audioPanel.onSmoothingChange}
+              onNoiseFloorChange={audioPanel.onNoiseFloorChange}
+              onPreGainChange={audioPanel.onPreGainChange}
             />
 
             <div className="audio-link-panel">
@@ -192,23 +308,11 @@ export default function MasterFxPanel({
                         <option value="pulse">Pulse</option>
                       </select>
                     </label>
-                    <label className="audio-setting">
-                      <span>Spectrum</span>
-                      <select
-                        value={audioPanel.fxLinks[fx.key].source || 'low'}
-                        onChange={(event) =>
-                          audioPanel.onFxLinkChange?.(fx.key, 'source', event.target.value)
-                        }
-                      >
-                        <option value="sub">Sub</option>
-                        <option value="low">Low</option>
-                        <option value="lowMid">Low Mid</option>
-                        <option value="mid">Mid</option>
-                        <option value="presence">Presence</option>
-                        <option value="high">High</option>
-                        <option value="full">Full</option>
-                      </select>
-                    </label>
+                    <BandPicker
+                      value={audioPanel.fxLinks[fx.key].source || 'low'}
+                      onChange={(band) => audioPanel.onFxLinkChange?.(fx.key, 'source', band)}
+                      spectrumRef={audioPanel.spectrumRef}
+                    />
                   </div>
                 ))}
               </div>
@@ -222,4 +326,4 @@ export default function MasterFxPanel({
       </p>
     </section>
   )
-}
+})

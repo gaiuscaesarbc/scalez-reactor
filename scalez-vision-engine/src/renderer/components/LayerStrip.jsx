@@ -1,11 +1,13 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, memo } from 'react'
 import { BLEND_MODES } from '../utils/blendModes'
 import ClipSlot from './ClipSlot'
+import BandPicker from './BandPicker'
 
 
-export default function LayerStrip({
+export default memo(function LayerStrip({
   layer,
   isFocused,
+  spectrumRef,
   cueMode,
   cuedSlotIndex,
   midiFlashSlots,
@@ -143,21 +145,11 @@ export default function LayerStrip({
                   <option value="pulse">Pulse</option>
                 </select>
               </label>
-              <label className="control-line">
-                <span>Spectrum</span>
-                <select
-                  value={audioLink.source || 'low'}
-                  onChange={(event) => onAudioLinkChange?.(layer.layerIndex, 'source', event.target.value)}
-                >
-                  <option value="sub">Sub</option>
-                  <option value="low">Low</option>
-                  <option value="lowMid">Low Mid</option>
-                  <option value="mid">Mid</option>
-                  <option value="presence">Presence</option>
-                  <option value="high">High</option>
-                  <option value="full">Full</option>
-                </select>
-              </label>
+              <BandPicker
+                value={audioLink.source || 'low'}
+                onChange={(band) => onAudioLinkChange?.(layer.layerIndex, 'source', band)}
+                spectrumRef={spectrumRef}
+              />
             </>
           )}
         </div>
@@ -231,23 +223,11 @@ export default function LayerStrip({
                 </select>
               </label>
 
-              <label className="control-line">
-                <span>Scale Spectrum</span>
-                <select
-                  value={videoMotion.scaleSource || 'low'}
-                  onChange={(event) =>
-                    onVideoMotionChange?.(layer.layerIndex, 'scaleSource', event.target.value)
-                  }
-                >
-                  <option value="sub">Sub</option>
-                  <option value="low">Low</option>
-                  <option value="lowMid">Low Mid</option>
-                  <option value="mid">Mid</option>
-                  <option value="presence">Presence</option>
-                  <option value="high">High</option>
-                  <option value="full">Full</option>
-                </select>
-              </label>
+              <BandPicker
+                value={videoMotion.scaleSource || 'low'}
+                onChange={(band) => onVideoMotionChange?.(layer.layerIndex, 'scaleSource', band)}
+                spectrumRef={spectrumRef}
+              />
 
               <label className="control-line">
                 <span>In Point: {Math.round(videoMotion.inPoint * 100)}%</span>
@@ -512,4 +492,4 @@ export default function LayerStrip({
       </div>
     </section>
   )
-}
+})
