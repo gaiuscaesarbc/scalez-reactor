@@ -16,6 +16,7 @@
 export function useEnergyState({
   bassLevel = 0,
   spectrumLevels = {},
+  spectrumBins = [],
   performanceMode = false,
   enabled = true,
   safeMode = false,
@@ -39,10 +40,17 @@ export function useEnergyState({
   const startupTimeRef = useRef(Date.now())
   const silenceFramesRef = useRef(0)
 
-  // Candidate frame counters â€” now decay (not hard reset) to prevent flickering
+  // Candidate frame counters — now decay (not hard reset) to prevent flickering
   const peakCandidateFramesRef = useRef(0)
   const buildCandidateFramesRef = useRef(0)
   const dropCandidateFramesRef = useRef(0)
+
+  // Spectral analysis refs
+  const prevBinsRef = useRef(null)     // previous frame bins for flux computation
+  const smoothFluxRef = useRef(0)      // smoothed spectral flux (0–1 normalized)
+  const brightnessRef = useRef(0.5)    // smoothed spectral brightness (upper-freq ratio)
+  const bassShortRef = useRef(0)       // fast EMA of low band (~2-3 frames) for transient detection
+  const bassLongRef = useRef(0)        // medium EMA of low band (~15 frames) baseline
 
   // Minimum time each state must hold before it can transition away.
   // Much longer than v1 to kill rapid flickering.
@@ -67,6 +75,11 @@ export function useEnergyState({
     peakCandidateFramesRef.current = 0
     buildCandidateFramesRef.current = 0
     dropCandidateFramesRef.current = 0
+    prevBinsRef.current = null
+    smoothFluxRef.current = 0
+    brightnessRef.current = 0.5
+    bassShortRef.current = 0
+    bassLongRef.current = 0
   }
 
   useEffect(() => {
@@ -147,7 +160,43 @@ export function useEnergyState({
     const isRising  = delta >  0.0022
     const isFalling = delta < -0.0022
 
-    const currentState   = lastEnergyStateRef.current
+    // ── Spectral flux ─────────────────────────────────────────────────────────
+    // Measures frame-to-frame change across all frequency bins.
+    // High flux = onset, transient, drop hit. Low flux = sustained/calm.
+    const bins = Array.isArray(spectrumBins) ? spectrumBins : []
+    const prevBins = prevBinsRef.current
+    let rawFlux = 0
+    if (bins.length > 0 && prevBins?.length === bins.length) {
+      let diffSum = 0
+      for (let i = 0; i < bins.length; i++) diffSum += Math.abs(bins[i] - prevBins[i])
+      rawFlux = diffSum / bins.length
+    }
+    prevBinsRef.current = bins.length > 0 ? bins.slice() : null
+    // Smooth flux and normalize (0.06 ≈ typical heavy-onset flux at 24fps/64-bin)
+    smoothFluxRef.current = smoothFluxRef.current * 0.72 + rawFlux * 0.28
+    const flux01 = Math.min(1, smoothFluxRef.current / 0.06)
+
+    // ── Spectral brightness ───────────────────────────────────────────────────
+    // Ratio of upper-frequency energy (mid + presence + high) vs total.
+    // Rises during builds; collapses when a drop hits heavy sub-bass.
+    const midBand      = spectrumLevels?.mid ?? 0
+    const presenceBand = spectrumLevels?.presence ?? 0
+    const highBand     = spectrumLevels?.high ?? 0
+    const rawBrightness = (midBand + presenceBand + highBand) / (Math.max(fullBand, 0.01) * 3)
+    const prevBrightness = brightnessRef.current
+    brightnessRef.current = prevBrightness * 0.88 + rawBrightness * 0.12
+    const brightness = brightnessRef.current
+    // isBrightnessRising: raw frame is pulling the smoothed average upward
+    const isBrightnessRising = rawBrightness > prevBrightness + 0.025
+
+    // ── Bass transient detector ───────────────────────────────────────────────
+    // Short EMA vs medium EMA of the low band. A spike (bassRel > 1.3) signals
+    // a kick or sub-bass hit — the defining EDM drop signature.
+    bassShortRef.current = bassShortRef.current * 0.65 + lowEnergy * 0.35  // ~2-3 frames
+    bassLongRef.current  = bassLongRef.current  * 0.94 + lowEnergy * 0.06  // ~15 frames
+    const bassRel = bassShortRef.current / Math.max(bassLongRef.current, 0.04)
+
+
     const holdMs         = STATE_HOLD_MS[currentState] ?? 1000
     const heldLongEnough = now - lastStateChangeTimeRef.current >= holdMs
 
@@ -167,27 +216,35 @@ export function useEnergyState({
       // â”€â”€ PEAK candidate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // Staying in peak: looser (already there)
       // Entering peak: strict â€” requires strong absolute + strong relative lift
+      // flux01 >= 0.30 = clear spectral burst => lower sectionScore bar
+      const peakFluxBoost = flux01 >= 0.30 ? 0.06 : 0
       const peakCandidate = wasPeak
         ? rel >= 1.08 && shortAvg >= 0.34 && fullEnergy >= 0.52 && sectionScore >= 0.42
-        : rel >= 1.14 && shortAvg >= 0.38 && fullEnergy >= 0.55 && sectionScore >= 0.48
+        : rel >= 1.14 && shortAvg >= 0.38 && fullEnergy >= 0.55 && sectionScore >= (0.48 - peakFluxBoost)
 
-      // â”€â”€ BUILD candidate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      // Must be actively rising with moderate song energy
+      // Build: rising loudness OR spectral brightness climbing (more highs/mids = tonal build-up)
       const buildCandidate =
-        isRising &&
+        (isRising || isBrightnessRising) &&
         rel >= 1.07 &&
         shortAvg >= 0.27 &&
         fullEnergy >= 0.36 &&
         sectionScore >= 0.40
 
-      // â”€â”€ DROP candidate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      // Real energy cliff: current level fell significantly below recent peak.
-      // Does NOT require isFalling (tiny per-frame delta) â€” compares to highWater.
-      const dropCandidate =
+      // Drop path A: energy cliff below high-water mark
+      const dropCliff =
         hadRecentHighEnergy &&
         highWater >= 0.26 &&
         shortAvg < highWater * 0.75 &&
-        sectionScore >= 0.10  // still some energy (not just falling silent)
+        sectionScore >= 0.10
+
+      // Drop path B: bass transient + brightness collapse (EDM kick-drop signature)
+      const dropBassHit =
+        hadRecentHighEnergy &&
+        bassRel >= 1.30 &&
+        brightness < 0.52 &&
+        sectionScore >= 0.14
+
+      const dropCandidate = dropCliff || dropBassHit
 
       // â”€â”€ Accumulate / decay (prevents hard-reset flicker) â”€â”€â”€â”€â”€â”€â”€â”€â”€
       peakCandidateFramesRef.current  = peakCandidate
@@ -261,8 +318,8 @@ export function useEnergyState({
       setEnergyIntensity(intensity)
     }
 
-    setEnergyMetrics({ rel, shortAvg, longAvg, sectionScore })
-  }, [bassLevel, spectrumLevels, enabled])
+    setEnergyMetrics({ rel, shortAvg, longAvg, sectionScore, flux01, brightness, bassRel })
+  }, [bassLevel, spectrumLevels, spectrumBins, enabled])
 
   // Return FX recommendations based on energy state
   const getEnergyFxRecommendation = () => {

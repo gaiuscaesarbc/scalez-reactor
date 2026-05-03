@@ -712,6 +712,7 @@ function ControlShell() {
   const { energyState, energyIntensity, energyMetrics, getEnergyFxRecommendation } = useEnergyState({
     bassLevel,
     spectrumLevels,
+    spectrumBins,
     performanceMode: performanceMode.performanceModeEnabled,
     enabled: energySystemEnabled,
     safeMode,
