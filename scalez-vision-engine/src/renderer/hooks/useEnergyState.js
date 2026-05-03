@@ -132,8 +132,8 @@ export function useEnergyState({
     const prevShort = prevShortAvgRef.current
     prevShortAvgRef.current = shortAvg
 
-    // High-water mark: tracks recent peak energy, decays slowly (~1.5s)
-    highWaterRef.current = Math.max(highWaterRef.current * 0.982, shortAvg)
+    // High-water mark: tracks recent peak energy, decays slowly (~3s)
+    highWaterRef.current = Math.max(highWaterRef.current * 0.991, shortAvg)
     const highWater = highWaterRef.current
 
     // â”€â”€ Derived signals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -168,8 +168,8 @@ export function useEnergyState({
       // Staying in peak: looser (already there)
       // Entering peak: strict â€” requires strong absolute + strong relative lift
       const peakCandidate = wasPeak
-        ? rel >= 1.10 && shortAvg >= 0.40 && fullEnergy >= 0.60 && sectionScore >= 0.58
-        : rel >= 1.22 && shortAvg >= 0.46 && fullEnergy >= 0.66 && sectionScore >= 0.64
+        ? rel >= 1.08 && shortAvg >= 0.34 && fullEnergy >= 0.52 && sectionScore >= 0.42
+        : rel >= 1.14 && shortAvg >= 0.38 && fullEnergy >= 0.55 && sectionScore >= 0.48
 
       // â”€â”€ BUILD candidate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // Must be actively rising with moderate song energy
@@ -185,9 +185,9 @@ export function useEnergyState({
       // Does NOT require isFalling (tiny per-frame delta) â€” compares to highWater.
       const dropCandidate =
         hadRecentHighEnergy &&
-        highWater >= 0.32 &&
-        shortAvg < highWater * 0.68 &&
-        sectionScore >= 0.16  // still some energy (not just falling silent)
+        highWater >= 0.26 &&
+        shortAvg < highWater * 0.75 &&
+        sectionScore >= 0.10  // still some energy (not just falling silent)
 
       // â”€â”€ Accumulate / decay (prevents hard-reset flicker) â”€â”€â”€â”€â”€â”€â”€â”€â”€
       peakCandidateFramesRef.current  = peakCandidate
@@ -210,9 +210,9 @@ export function useEnergyState({
 
       } else if (
         dropCandidateFramesRef.current >= 3 &&
-        (wasPeak || wasBuild)
+        hadRecentHighEnergy
       ) {
-        // Drop immediately after peak or build (energy cliff)
+        // Drop after any high-energy state (energy cliff)
         nextState = 'drop'
 
       } else if (buildCandidateFramesRef.current >= 5) {
