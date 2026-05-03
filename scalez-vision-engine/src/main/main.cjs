@@ -521,6 +521,30 @@ function registerIpcHandlers() {
 
   ipcMain.handle('app:get-platform', () => process.platform)
 
+  ipcMain.handle('app:get-performance-stats', (event) => {
+    const metrics = app.getAppMetrics() || []
+    const senderPid = event?.sender?.getOSProcessId?.() || 0
+
+    const sumCpu = (items) => items.reduce((acc, item) => {
+      const value = item?.cpu?.percentCPUUsage
+      return acc + (Number.isFinite(value) ? value : 0)
+    }, 0)
+
+    const senderMetric = metrics.find((item) => item?.pid === senderPid)
+    const gpuMetrics = metrics.filter((item) => String(item?.type || '').toLowerCase() === 'gpu')
+
+    const cpuPercent = Number.isFinite(senderMetric?.cpu?.percentCPUUsage)
+      ? senderMetric.cpu.percentCPUUsage
+      : 0
+    const gpuPercent = sumCpu(gpuMetrics)
+
+    return {
+      cpuPercent,
+      gpuPercent,
+      sampledAt: Date.now(),
+    }
+  })
+
   ipcMain.handle('app:open-devtools', (_event) => {
     const win = BrowserWindow.fromWebContents(_event.sender)
     if (win) {

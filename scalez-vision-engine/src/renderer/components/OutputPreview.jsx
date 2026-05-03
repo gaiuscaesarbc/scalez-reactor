@@ -219,6 +219,7 @@ export default function OutputPreview({
   const canPlayLogRef = useRef({})
   const [, setBounceRenderVersion] = useState(0)
   const [strobeFlash, setStrobeFlash] = useState({ key: 0, opacity: 0 })
+  const [perfStats, setPerfStats] = useState({ cpuPercent: 0, gpuPercent: 0 })
   const playAttemptRef = useRef({})
   const playRejectLogRef = useRef({})
   const successfulCanPlayRef = useRef({})
@@ -283,6 +284,33 @@ export default function OutputPreview({
   useEffect(() => {
     setSyncStatus('synced')
   }, [layers])
+
+  useEffect(() => {
+    let disposed = false
+
+    const refreshPerformanceStats = async () => {
+      try {
+        const stats = await window.scalezApi?.getPerformanceStats?.()
+        if (!disposed && stats && typeof stats === 'object') {
+          setPerfStats({
+            cpuPercent: Number.isFinite(stats.cpuPercent) ? stats.cpuPercent : 0,
+            gpuPercent: Number.isFinite(stats.gpuPercent) ? stats.gpuPercent : 0,
+          })
+        }
+      } catch {
+        if (!disposed) {
+          setPerfStats((current) => current)
+        }
+      }
+    }
+
+    refreshPerformanceStats()
+    const timer = setInterval(refreshPerformanceStats, 1000)
+    return () => {
+      disposed = true
+      clearInterval(timer)
+    }
+  }, [])
 
   useEffect(() => {
     latestLayersRef.current = layers
@@ -1248,6 +1276,8 @@ export default function OutputPreview({
           <div className="preview-overlays">
             <div className="overlay-row">
               <div className="overlay-chip">FPS {fps}</div>
+              <div className="overlay-chip">CPU {Math.max(0, perfStats.cpuPercent).toFixed(1)}%</div>
+              <div className="overlay-chip">GPU {Math.max(0, perfStats.gpuPercent).toFixed(1)}%</div>
               <div className="overlay-chip">Videos {activeCount}</div>
               <div className={`overlay-chip sync-status sync-${syncStatus}`}>{syncStatus}</div>
             </div>

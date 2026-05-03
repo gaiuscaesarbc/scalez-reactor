@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('scalezApi', {
   toggleOutputFullscreen: () => ipcRenderer.invoke('output:toggle-fullscreen'),
   setOutputFullscreen: (value) => ipcRenderer.invoke('output:set-fullscreen', value),
   getPlatform: () => ipcRenderer.invoke('app:get-platform'),
+  getPerformanceStats: () => ipcRenderer.invoke('app:get-performance-stats'),
   openDevTools: () => ipcRenderer.invoke('app:open-devtools'),
   openControlDevTools: () => ipcRenderer.invoke('app:open-control-devtools'),
   openOutputDevTools: () => ipcRenderer.invoke('app:open-output-devtools'),
