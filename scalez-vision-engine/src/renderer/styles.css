@@ -1135,14 +1135,17 @@ body.output-window #root {
 .lfx-meter__seg--manual {
   background: rgba(255,255,255,0.45);
   left: 0;
+    z-index: 0;
 }
 
 .lfx-meter__seg--energy {
-  background: rgba(74,180,255,0.75);
+  background: rgba(74,180,255,0.95);
+  z-index: 2;
 }
 
 .lfx-meter__seg--drop {
-  background: rgba(221,102,255,0.8);
+  background: rgba(221,102,255,0.95);
+  z-index: 1;
 }
 
 .lfx-meter__tip {
