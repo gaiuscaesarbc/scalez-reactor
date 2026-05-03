@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 export const DEFAULT_MASTER_FX = {
-  glow: 0.25,
+  glow: 0,
   strobe: 0,
   shake: 0,
   brightness: 1,

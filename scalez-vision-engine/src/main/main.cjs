@@ -34,7 +34,7 @@ let lastNativePlaybackSignature = ''
 let sharedOutputState = {
   layers: [],
   masterFx: {
-    glow: 0.25,
+    glow: 0,
     strobe: 0,
     shake: 0,
     brightness: 1,
