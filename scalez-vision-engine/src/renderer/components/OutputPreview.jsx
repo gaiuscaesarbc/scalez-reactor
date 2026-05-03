@@ -1156,8 +1156,8 @@ export default function OutputPreview({
         aria-label="Live output preview"
         style={{
            filter: `brightness(${finalBrightness})`,
-          '--glow-px': `${(8 + glowStrength * 30).toFixed(2)}px`,
-          '--glow-alpha': (0.1 + glowStrength * 0.2).toFixed(3),
+          '--glow-px': glowStrength > 0.01 ? `${(8 + glowStrength * 30).toFixed(2)}px` : '0px',
+          '--glow-alpha': glowStrength > 0.01 ? (0.1 + glowStrength * 0.2).toFixed(3) : '0',
         }}
       >
         <div className="preview-backdrop" />
