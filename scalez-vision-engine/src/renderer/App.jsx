@@ -707,7 +707,7 @@ function ControlShell() {
   spectrumLevelsRef.current = spectrumLevels
 
   // Energy System (PART 3)
-  const { energyState, energyIntensity, getEnergyFxRecommendation } = useEnergyState({
+  const { energyState, energyIntensity, energyMetrics, getEnergyFxRecommendation } = useEnergyState({
     bassLevel,
     spectrumLevels,
     performanceMode: performanceMode.performanceModeEnabled,
@@ -1243,6 +1243,7 @@ function ControlShell() {
         onPerformanceModeChange={performanceMode.setPerformanceModeEnabled}
         energyState={activeEnergyState}
         energyIntensity={activeEnergyIntensity}
+        energyMetrics={energyMetrics}
         energySystemEnabled={energySystemEnabled}
         onEnergySystemChange={setEnergySystemEnabled}
         energyManualOverrideEnabled={energyManualOverrideEnabled}

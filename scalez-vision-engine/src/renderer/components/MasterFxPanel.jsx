@@ -3,6 +3,7 @@ import AudioMeter from './AudioMeter'
 import BandPicker from './BandPicker'
 import EnergyDashboard from './EnergyDashboard'
 import CompactPreview from './CompactPreview'
+import LiveFxMeters from './LiveFxMeters'
 
 const FX_KEYS = [
   { key: 'glow', label: 'Glow', min: 0, max: 1, step: 0.01 },
@@ -31,6 +32,7 @@ export default memo(function MasterFxPanel({
   onPerformanceModeChange,
   energyState = 'calm',
   energyIntensity = 0,
+  energyMetrics = { rel: 1, shortAvg: 0, longAvg: 0, sectionScore: 0 },
   energySystemEnabled = true,
   onEnergySystemChange,
   energyManualOverrideEnabled = false,
@@ -218,6 +220,15 @@ export default memo(function MasterFxPanel({
       <div className="master-fx-grid">
         <div className="fx-section">
           <h3>Visual FX</h3>
+          <CompactPreview
+            layers={layers}
+            masterFx={masterFx}
+            smoothedEnergyFx={smoothedEnergyFx}
+            smoothedDropFx={smoothedDropFx}
+            energySystemEnabled={energySystemEnabled}
+            energyState={energyState}
+            blackout={blackout}
+          />
           <div className="fx-grid">
             {FX_KEYS.map((fx) => (
               <label key={fx.key} className="fx-control">
@@ -239,18 +250,16 @@ export default memo(function MasterFxPanel({
             <EnergyDashboard
               energyState={energyState}
               energyIntensity={energyIntensity}
+              energyMetrics={energyMetrics}
               spectrumLevels={audioPanel?.spectrumLevels || []}
               dropArmed={dropArmed}
             />
           )}
-          <CompactPreview
-            layers={layers}
+          <LiveFxMeters
             masterFx={masterFx}
             smoothedEnergyFx={smoothedEnergyFx}
             smoothedDropFx={smoothedDropFx}
             energySystemEnabled={energySystemEnabled}
-            energyState={energyState}
-            blackout={blackout}
           />
         </div>
 

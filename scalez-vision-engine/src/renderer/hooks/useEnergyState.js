@@ -16,6 +16,7 @@ export function useEnergyState({
 }) {
   const [energyState, setEnergyState] = useState('calm')
   const [energyIntensity, setEnergyIntensity] = useState(0)
+  const [energyMetrics, setEnergyMetrics] = useState({ rel: 1, shortAvg: 0, longAvg: 0, sectionScore: 0 })
   const lastIntensityRef = useRef(0)
 
   // Short window: ~0.4s average (reacts quickly to current moment)
@@ -203,6 +204,8 @@ export function useEnergyState({
       lastIntensityRef.current = intensity
       setEnergyIntensity(intensity)
     }
+    // Update metrics for dashboard display (~every 2nd frame is fine)
+    setEnergyMetrics({ rel, shortAvg, longAvg, sectionScore })
   }, [bassLevel, spectrumLevels, enabled])
 
   // Return FX recommendations based on energy state
@@ -249,6 +252,7 @@ export function useEnergyState({
   return {
     energyState,
     energyIntensity,
+    energyMetrics,
     getEnergyFxRecommendation,
   }
 }
