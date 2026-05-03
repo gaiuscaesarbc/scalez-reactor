@@ -18,6 +18,8 @@ export function buildOutputState({
   energyStrobeCount = 0,
   energyState = 'calm',
   energyIntensity = 0,
+  smoothedDropFx = null,
+  dropStrobeCount = 0,
 }) {
   return {
     layers,
@@ -41,6 +43,10 @@ export function buildOutputState({
       strobeCount: energyStrobeCount,
       state: energyState,
       intensity: energyIntensity,
+    },
+    drop: {
+      smoothedFx: smoothedDropFx || { glowBoost: 0, shakeIntensity: 0, brightnessBoost: 0 },
+      strobeCount: dropStrobeCount,
     },
     updatedAt: Date.now(),
   }

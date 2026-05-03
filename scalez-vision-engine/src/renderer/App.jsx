@@ -19,6 +19,7 @@ import { useEnergyFxMapping } from './hooks/useEnergyFxMapping'
 import { useEnergyFxSmoother } from './hooks/useEnergyFxSmoother'
 import { useClipVariation } from './hooks/useClipVariation'
 import { useAutoEvolution } from './hooks/useAutoEvolution'
+import { useDropSystem } from './hooks/useDropSystem'
 import {
   buildOutputState,
   DEFAULT_MASTER_FX,
@@ -129,6 +130,8 @@ function OutputShell() {
   const energyStrobeCount = syncedState?.energy?.strobeCount ?? 0
   const energyState = syncedState?.energy?.state || 'calm'
   const energyIntensity = syncedState?.energy?.intensity ?? 0
+  const smoothedDropFx = syncedState?.drop?.smoothedFx || null
+  const dropStrobeCount = syncedState?.drop?.strobeCount ?? 0
 
   return (
     <main className="output-shell">
@@ -146,6 +149,8 @@ function OutputShell() {
         energyStrobeCount={energyStrobeCount}
         energyState={energyState}
         energyIntensity={energyIntensity}
+        smoothedDropFx={smoothedDropFx}
+        dropStrobeCount={dropStrobeCount}
       />
     </main>
   )
@@ -210,6 +215,8 @@ function ControlShell() {
   const [energyManualOverrideEnabled, setEnergyManualOverrideEnabled] = useState(false)
   const [manualEnergyState, setManualEnergyState] = useState('calm')
   const [manualEnergyIntensity, setManualEnergyIntensity] = useState(0.35)
+  const [dropSystemEnabled, setDropSystemEnabled] = useState(false)
+  const [dropThresholdLevel, setDropThresholdLevel] = useState('medium')
   const [clipVariationEnabled, setClipVariationEnabled] = useState(false)
   const [autoEvolutionEnabled, setAutoEvolutionEnabled] = useState(false)
   const [autoEvolutionInterval, setAutoEvolutionInterval] = useState(60)
@@ -629,6 +636,8 @@ function ControlShell() {
     energyManualOverrideEnabled,
     manualEnergyState,
     manualEnergyIntensity,
+    dropSystemEnabled,
+    dropThresholdLevel,
     clipVariationEnabled,
     autoEvolutionEnabled,
     autoEvolutionInterval,
@@ -655,6 +664,8 @@ function ControlShell() {
     if (settings.manualEnergyState) setManualEnergyState(settings.manualEnergyState)
     if (settings.manualEnergyIntensity != null)
       setManualEnergyIntensity(settings.manualEnergyIntensity)
+    if (settings.dropSystemEnabled != null) setDropSystemEnabled(settings.dropSystemEnabled)
+    if (settings.dropThresholdLevel) setDropThresholdLevel(settings.dropThresholdLevel)
     if (settings.clipVariationEnabled != null) setClipVariationEnabled(settings.clipVariationEnabled)
     if (settings.autoEvolutionEnabled != null) setAutoEvolutionEnabled(settings.autoEvolutionEnabled)
     if (settings.autoEvolutionInterval != null) setAutoEvolutionInterval(settings.autoEvolutionInterval)
@@ -707,6 +718,21 @@ function ControlShell() {
   const activeEnergyState = energyManualOverrideEnabled ? manualEnergyState : energyState
   const activeEnergyIntensity = energyManualOverrideEnabled ? manualEnergyIntensity : energyIntensity
 
+  const dropSystem = useDropSystem({
+    energyState: activeEnergyState,
+    energyIntensity: activeEnergyIntensity,
+    energySystemEnabled,
+    dropSystemEnabled,
+    dropThresholdLevel,
+    safeModeEnabled: safeMode,
+    performanceModeEnabled: performanceMode.performanceModeEnabled,
+    blackoutEnabled: blackout,
+    layers,
+    triggerClip,
+    setLayerOpacity,
+    setMasterFx,
+  })
+
     // Energy FX Mapping (PART 1-2): Convert energy state to FX values with strobe cooldown
     const energyFxMapping = useEnergyFxMapping({
       energyState: activeEnergyState,
@@ -724,6 +750,14 @@ function ControlShell() {
       brightnessBoost: energyFxMapping.brightnessBoost,
       lerpFactor: 0.12,
       enabled: energySystemEnabled,
+    })
+
+    const smoothedDropFx = useEnergyFxSmoother({
+      glowBoost: dropSystem.dropFx.glowBoost,
+      shakeIntensity: dropSystem.dropFx.shakeBoost,
+      brightnessBoost: dropSystem.dropFx.brightnessBoost,
+      lerpFactor: 0.22,
+      enabled: energySystemEnabled && dropSystemEnabled && !performanceMode.performanceModeEnabled,
     })
 
   // Clip Variation (PART 4)
@@ -924,14 +958,15 @@ function ControlShell() {
         videoMotion.scaleAmount ?? 0,
       )
       const reactiveScale = Math.max(0.05, (videoMotion.scale ?? 1) + scaleBoost)
+      const dropOpacityFloor = dropSystem.layerOpacityFloors[layer.layerIndex] ?? 0
 
       return {
         ...layer,
-        opacity: Math.min(1, reactiveOpacity),
+        opacity: Math.min(1, Math.max(reactiveOpacity, dropOpacityFloor)),
         videoMotion: { ...videoMotion, scale: reactiveScale },
       }
     }),
-    [layers, layerAudioLinks, layerVideoMotion, clipVideoMotion, spectrumLevels],
+    [layers, layerAudioLinks, layerVideoMotion, clipVideoMotion, spectrumLevels, dropSystem.layerOpacityFloors],
   )
 
   const effectiveMasterFx = useMemo(
@@ -1006,9 +1041,11 @@ function ControlShell() {
       energyStrobeCount: energyFxMapping.strobeCount,
       energyState: activeEnergyState,
       energyIntensity: activeEnergyIntensity,
+      smoothedDropFx,
+      dropStrobeCount: dropSystem.dropStrobeCount,
     })
     window.scalezApi?.publishOutputState?.(nextState)
-  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels, energySystemEnabled, smoothedEnergyFx, energyFxMapping.strobeCount, activeEnergyState, activeEnergyIntensity])
+  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels, energySystemEnabled, smoothedEnergyFx, energyFxMapping.strobeCount, activeEnergyState, activeEnergyIntensity, smoothedDropFx, dropSystem.dropStrobeCount])
 
   return (
     <main className={`control-shell${compactMode ? ' is-compact' : ''}`}>
@@ -1142,6 +1179,8 @@ function ControlShell() {
           energyFxMapping={energyFxMapping}
           energyStrobeCount={energyFxMapping.strobeCount}
           energySystemEnabled={energySystemEnabled}
+            smoothedDropFx={smoothedDropFx}
+            dropStrobeCount={dropSystem.dropStrobeCount}
       />
 
       {!hasAnyLoadedClip && (
@@ -1212,6 +1251,14 @@ function ControlShell() {
         onManualEnergyStateChange={setManualEnergyState}
         manualEnergyIntensity={manualEnergyIntensity}
         onManualEnergyIntensityChange={setManualEnergyIntensity}
+        dropSystemEnabled={dropSystemEnabled}
+        onDropSystemChange={setDropSystemEnabled}
+        dropThresholdLevel={dropThresholdLevel}
+        onDropThresholdLevelChange={setDropThresholdLevel}
+        lastDropIntensity={dropSystem.lastDropIntensity}
+        dropCount={dropSystem.dropCount}
+        recentDropEvent={dropSystem.recentDropEvent}
+        dropArmed={dropSystem.dropArmed}
         clipVariationEnabled={clipVariationEnabled}
         onClipVariationChange={setClipVariationEnabled}
         autoEvolutionEnabled={autoEvolutionEnabled}

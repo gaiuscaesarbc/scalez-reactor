@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useEffect, useState } from 'react'
 import AudioMeter from './AudioMeter'
 import BandPicker from './BandPicker'
 
@@ -37,6 +37,14 @@ export default memo(function MasterFxPanel({
   onManualEnergyStateChange,
   manualEnergyIntensity = 0.35,
   onManualEnergyIntensityChange,
+  dropSystemEnabled = false,
+  onDropSystemChange,
+  dropThresholdLevel = 'medium',
+  onDropThresholdLevelChange,
+  lastDropIntensity = 0,
+  dropCount = 0,
+  recentDropEvent = null,
+  dropArmed = false,
   clipVariationEnabled = false,
   onClipVariationChange,
   autoEvolutionEnabled = false,
@@ -45,6 +53,17 @@ export default memo(function MasterFxPanel({
   onAutoEvolutionIntervalChange,
   audioPanel,
 }) {
+  const [showRecentDrop, setShowRecentDrop] = useState(false)
+
+  useEffect(() => {
+    if (!recentDropEvent?.timestamp) {
+      return undefined
+    }
+    setShowRecentDrop(true)
+    const timer = setTimeout(() => setShowRecentDrop(false), 4500)
+    return () => clearTimeout(timer)
+  }, [recentDropEvent?.timestamp])
+
   return (
     <section className="bottom-panel panel-glass">
       <div className="bottom-panel__header">
@@ -117,6 +136,39 @@ export default memo(function MasterFxPanel({
           {energySystemEnabled && (
             <div className="energy-badge" title={`Energy State: ${energyState} (${Math.round(energyIntensity * 100)}%)`}>
               {energyState.toUpperCase()}
+            </div>
+          )}
+          {energySystemEnabled && (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={dropSystemEnabled}
+                onChange={(event) => onDropSystemChange?.(event.target.checked)}
+              />
+              Drop
+            </label>
+          )}
+          {energySystemEnabled && dropSystemEnabled && (
+            <label className="control-line compact">
+              <span>Drop:</span>
+              <select
+                value={dropThresholdLevel}
+                onChange={(event) => onDropThresholdLevelChange?.(event.target.value)}
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+          )}
+          {energySystemEnabled && dropSystemEnabled && (
+            <div className={`drop-badge${dropArmed ? ' is-armed' : ''}`} title={`Drops this session: ${dropCount}`}>
+              {dropArmed ? 'ARMED' : `Drops ${dropCount}`}
+            </div>
+          )}
+          {energySystemEnabled && dropSystemEnabled && showRecentDrop && recentDropEvent && (
+            <div className="drop-badge drop-badge--recent" title={`Previous state: ${recentDropEvent.previousEnergyState}`}>
+              Last Drop: {lastDropIntensity.toFixed(2)}
             </div>
           )}
           <label className="checkbox-label">

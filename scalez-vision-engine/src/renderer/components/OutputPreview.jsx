@@ -209,6 +209,8 @@ export default function OutputPreview({
   energyFxMapping = {},
   energyStrobeCount = 0,
   energySystemEnabled = false,
+  smoothedDropFx = {},
+  dropStrobeCount = 0,
 }) {
   const previewRef = useRef(null)
   const videoRefsRef = useRef({})
@@ -223,6 +225,7 @@ export default function OutputPreview({
   const bounceCanPlaySeekRef = useRef({})
   const manualStrobeTimeoutRef = useRef(null)
   const energyStrobeTimeoutRef = useRef(null)
+  const dropStrobeTimeoutRef = useRef(null)
   const lastStrobeLevelRef = useRef(0)
 
   const refreshBounceRender = () => {
@@ -349,6 +352,33 @@ export default function OutputPreview({
   }, [energyStrobeCount, blackout, energySystemEnabled])
 
   useEffect(() => {
+    if (blackout || dropStrobeCount === 0) {
+      return
+    }
+
+    setStrobeFlash((current) => ({
+      key: current.key + 1,
+      opacity: 0.75,
+    }))
+
+    if (dropStrobeTimeoutRef.current) {
+      clearTimeout(dropStrobeTimeoutRef.current)
+    }
+
+    dropStrobeTimeoutRef.current = setTimeout(() => {
+      setStrobeFlash((current) => ({ ...current, opacity: 0 }))
+      dropStrobeTimeoutRef.current = null
+    }, 140)
+
+    return () => {
+      if (dropStrobeTimeoutRef.current) {
+        clearTimeout(dropStrobeTimeoutRef.current)
+        dropStrobeTimeoutRef.current = null
+      }
+    }
+  }, [dropStrobeCount, blackout])
+
+  useEffect(() => {
     const previewEl = previewRef.current
     if (!previewEl) {
       return undefined
@@ -357,7 +387,8 @@ export default function OutputPreview({
     let frameId = null
     // PART 3: Merge energy shake with manual shake
     const energyShakeBoost = energySystemEnabled ? (smoothedEnergyFx?.shakeIntensity ?? 0) : 0
-    const shakeAmount = Math.max(0, Math.min(1.0, Number(masterFx?.shake ?? 0) + energyShakeBoost))
+    const dropShakeBoost = smoothedDropFx?.shakeIntensity ?? 0
+    const shakeAmount = Math.max(0, Math.min(1.0, Number(masterFx?.shake ?? 0) + energyShakeBoost + dropShakeBoost))
 
     if (shakeAmount <= 0.08) {
       previewEl.style.setProperty('--shake-x', '0px')
@@ -383,7 +414,7 @@ export default function OutputPreview({
       previewEl.style.setProperty('--shake-x', '0px')
       previewEl.style.setProperty('--shake-y', '0px')
     }
-  }, [masterFx?.shake, smoothedEnergyFx?.shakeIntensity])
+  }, [masterFx?.shake, smoothedEnergyFx?.shakeIntensity, smoothedDropFx?.shakeIntensity])
 
   // Apply per-layer timeline range and audio-reactive playback motion.
   useEffect(() => {
@@ -1080,9 +1111,11 @@ export default function OutputPreview({
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
     const energyGlowBoost = energySystemEnabled ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
-    const glowStrength = Math.min(1.5, masterFx.glow + energyGlowBoost)
+    const dropGlowBoost = smoothedDropFx?.glowBoost ?? 0
+    const glowStrength = Math.min(1.5, masterFx.glow + energyGlowBoost + dropGlowBoost)
     const energyBrightnessBoost = energySystemEnabled ? (smoothedEnergyFx?.brightnessBoost ?? 0) : 0
-    const finalBrightness = Math.max(0.5, Math.min(1.5, masterFx.brightness + energyBrightnessBoost))
+    const dropBrightnessBoost = smoothedDropFx?.brightnessBoost ?? 0
+    const finalBrightness = Math.max(0.5, Math.min(1.5, masterFx.brightness + energyBrightnessBoost + dropBrightnessBoost))
 
   const strobeActive = strobeFlash.opacity > 0.01
 

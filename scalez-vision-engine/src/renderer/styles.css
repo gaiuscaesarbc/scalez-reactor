@@ -919,6 +919,30 @@ body.output-window #root {
   width: 100%;
 }
 
+.drop-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(74, 180, 255, 0.35);
+  background: rgba(74, 180, 255, 0.12);
+  color: #b8ddff;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.drop-badge.is-armed {
+  border-color: rgba(255, 159, 64, 0.7);
+  background: rgba(255, 159, 64, 0.16);
+  color: #ffd19c;
+}
+
+.drop-badge--recent {
+  border-color: rgba(255, 70, 109, 0.58);
+  background: rgba(255, 70, 109, 0.16);
+  color: #ffd8e1;
+}
+
 .output-shell {
   min-height: 100vh;
   padding: 0;
