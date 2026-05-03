@@ -1117,6 +1117,9 @@ body.output-window #root {
 
 .lfx-meter__track {
   position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   height: 10px;
   background: rgba(0,0,0,0.5);
   border-radius: 3px;
@@ -1124,35 +1127,28 @@ body.output-window #root {
   border: 1px solid rgba(255,255,255,0.08);
 }
 
-.lfx-meter__seg {
-  position: absolute;
-  top: 0;
+.lfx-seg {
   height: 100%;
-  min-width: 0;
-  transition: width 0.06s linear, left 0.06s linear;
+  flex-shrink: 0;
+  transition: width 0.06s linear;
 }
 
-.lfx-meter__seg--manual {
-  background: rgba(255,255,255,0.45);
-  left: 0;
-    z-index: 0;
+.lfx-seg--manual {
+  background: rgba(255,255,255,0.5);
 }
 
-.lfx-meter__seg--energy {
-  background: rgba(74,180,255,0.95);
-  z-index: 2;
+.lfx-seg--energy {
+  background: rgba(74,180,255,1);
 }
 
-.lfx-meter__seg--drop {
-  background: rgba(221,102,255,0.95);
-  z-index: 1;
+.lfx-seg--drop {
+  background: rgba(221,102,255,1);
 }
 
 .lfx-meter__tip {
-  position: absolute;
-  top: 1px;
   width: 3px;
-  height: calc(100% - 2px);
+  height: 100%;
+  flex-shrink: 0;
   background: rgba(255,255,255,0.9);
   border-radius: 1px;
   pointer-events: none;

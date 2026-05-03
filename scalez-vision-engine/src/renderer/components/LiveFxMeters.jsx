@@ -15,8 +15,8 @@ function StackedBar({ label, color, manual, energy, drop, max }) {
   const manualPct = clamp(manual / max) * 100
   const energyPct = clamp(energy / max) * 100
   const dropPct   = clamp(drop   / max) * 100
-  const totalPct  = clamp((manual + energy + drop) / max) * 100
   const totalVal  = clamp(manual + energy + drop, 0, max)
+  const totalPct  = clamp((manual + energy + drop) / max) * 100
 
   return (
     <div className="lfx-meter">
@@ -25,29 +25,35 @@ function StackedBar({ label, color, manual, energy, drop, max }) {
         <span className="lfx-meter__value" style={{ color }}>{totalVal.toFixed(2)}</span>
       </div>
       <div className="lfx-meter__track">
-        <div
-          className="lfx-meter__seg lfx-meter__seg--manual"
-          style={{ width: `${manualPct}%` }}
-          title={`Manual: ${manual.toFixed(2)}`}
-        />
-        <div
-          className="lfx-meter__seg lfx-meter__seg--energy"
-          style={{ width: `${energyPct}%`, left: `${manualPct}%` }}
-          title={`Energy: ${energy.toFixed(2)}`}
-        />
-        <div
-          className="lfx-meter__seg lfx-meter__seg--drop"
-          style={{ width: `${dropPct}%`, left: `${clamp((manual + energy) / max) * 100}%` }}
-          title={`Drop: ${drop.toFixed(2)}`}
-        />
+        {manualPct > 0.1 && (
+          <div
+            className="lfx-seg lfx-seg--manual"
+            style={{ width: `${manualPct}%` }}
+            title={`Manual: ${manual.toFixed(2)}`}
+          />
+        )}
+        {energyPct > 0.1 && (
+          <div
+            className="lfx-seg lfx-seg--energy"
+            style={{ width: `${energyPct}%` }}
+            title={`Energy: ${energy.toFixed(2)}`}
+          />
+        )}
+        {dropPct > 0.1 && (
+          <div
+            className="lfx-seg lfx-seg--drop"
+            style={{ width: `${dropPct}%` }}
+            title={`Drop: ${drop.toFixed(2)}`}
+          />
+        )}
         {totalPct > 5 && (
           <div
             className="lfx-meter__tip"
-            style={{ left: `${Math.min(97, totalPct)}%`, boxShadow: `0 0 6px ${color}` }}
+            style={{ boxShadow: `0 0 6px ${color}` }}
           />
         )}
         {totalPct >= 99 && (
-          <div className="lfx-meter__clip">CLIP</div>
+          <span className="lfx-meter__clip">CLIP</span>
         )}
       </div>
     </div>
