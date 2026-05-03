@@ -519,6 +519,19 @@ function registerIpcHandlers() {
     return outputWindow.isFullScreen()
   })
 
+  ipcMain.handle('output:set-resolution', (_event, { width, height }) => {
+    if (!outputWindow || outputWindow.isDestroyed()) {
+      return { ok: false, error: 'Output window not open' }
+    }
+    const w = Math.max(320, Math.min(7680, Math.round(Number(width))))
+    const h = Math.max(240, Math.min(4320, Math.round(Number(height))))
+    if (!Number.isFinite(w) || !Number.isFinite(h)) {
+      return { ok: false, error: 'Invalid dimensions' }
+    }
+    outputWindow.setContentSize(w, h)
+    return { ok: true, width: w, height: h }
+  })
+
   ipcMain.handle('app:get-platform', () => process.platform)
 
   ipcMain.handle('app:get-performance-stats', (event) => {

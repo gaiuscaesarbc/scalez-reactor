@@ -6,6 +6,7 @@ import TestModePanel from './components/TestModePanel'
 import ShowManager from './components/ShowManager'
 import MidiPanel from './components/MidiPanel'
 import { EnergyDebugBadge } from './components/EnergyDebugBadge'
+import SettingsPanel from './components/SettingsPanel'
 import { useClipStore } from './hooks/useClipStore'
 import { useFps } from './hooks/useFps'
 import { useSessionTimer } from './hooks/useSessionTimer'
@@ -204,6 +205,7 @@ function ControlShell() {
   const [clipVideoMotion, setClipVideoMotion] = useState({})
   const [safeMode, setSafeMode] = useState(false)
   const [showTestMode, setShowTestMode] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [compactMode, setCompactMode] = useState(false)
   const [savedShows, setSavedShows] = useState([])
   const [nativePlaybackStatus, setNativePlaybackStatus] = useState(null)
@@ -1137,6 +1139,14 @@ function ControlShell() {
           </button>
           <button
             type="button"
+            className={`pill${showSettings ? ' is-active' : ''}`}
+            onClick={() => setShowSettings((v) => !v)}
+            title="Settings"
+          >
+            ⚙ Settings
+          </button>
+          <button
+            type="button"
             className="pill"
             onClick={() => window.scalezApi?.openDevTools()}
             title="Open DevTools for this window"
@@ -1306,6 +1316,12 @@ function ControlShell() {
           onBassSimulate={() => {}}
           onToggleLayerVisibility={setLayerVisible}
         />
+      )}
+      {showSettings && (
+        <>
+          <div className="settings-backdrop" onClick={() => setShowSettings(false)} />
+          <SettingsPanel onClose={() => setShowSettings(false)} />
+        </>
       )}
     </main>
   )
