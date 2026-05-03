@@ -1291,6 +1291,9 @@ function ControlShell() {
           onPreGainChange: setAudioPreGain,
           spectrumRef: spectrumLevelsRef,
         }}
+        layers={layers}
+        smoothedEnergyFx={smoothedEnergyFx}
+        smoothedDropFx={smoothedDropFx}
       />
 
       {showTestMode && (

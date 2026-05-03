@@ -2,6 +2,7 @@ import { memo, useEffect, useState } from 'react'
 import AudioMeter from './AudioMeter'
 import BandPicker from './BandPicker'
 import EnergyDashboard from './EnergyDashboard'
+import CompactPreview from './CompactPreview'
 
 const FX_KEYS = [
   { key: 'glow', label: 'Glow', min: 0, max: 1, step: 0.01 },
@@ -53,6 +54,9 @@ export default memo(function MasterFxPanel({
   autoEvolutionInterval = 60,
   onAutoEvolutionIntervalChange,
   audioPanel,
+  layers = [],
+  smoothedEnergyFx = {},
+  smoothedDropFx = {},
 }) {
   const [showRecentDrop, setShowRecentDrop] = useState(false)
 
@@ -239,6 +243,15 @@ export default memo(function MasterFxPanel({
               dropArmed={dropArmed}
             />
           )}
+          <CompactPreview
+            layers={layers}
+            masterFx={masterFx}
+            smoothedEnergyFx={smoothedEnergyFx}
+            smoothedDropFx={smoothedDropFx}
+            energySystemEnabled={energySystemEnabled}
+            energyState={energyState}
+            blackout={blackout}
+          />
         </div>
 
         {audioPanel && (
