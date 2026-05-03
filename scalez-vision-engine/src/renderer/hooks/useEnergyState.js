@@ -196,7 +196,7 @@ export function useEnergyState({
     bassLongRef.current  = bassLongRef.current  * 0.94 + lowEnergy * 0.06  // ~15 frames
     const bassRel = bassShortRef.current / Math.max(bassLongRef.current, 0.04)
 
-
+    const currentState   = lastEnergyStateRef.current
     const holdMs         = STATE_HOLD_MS[currentState] ?? 1000
     const heldLongEnough = now - lastStateChangeTimeRef.current >= holdMs
 
