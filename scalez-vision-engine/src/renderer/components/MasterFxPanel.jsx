@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react'
 import AudioMeter from './AudioMeter'
 import BandPicker from './BandPicker'
+import EnergyDashboard from './EnergyDashboard'
 
 const FX_KEYS = [
   { key: 'glow', label: 'Glow', min: 0, max: 1, step: 0.01 },
@@ -230,6 +231,14 @@ export default memo(function MasterFxPanel({
               </label>
             ))}
           </div>
+          {energySystemEnabled && (
+            <EnergyDashboard
+              energyState={energyState}
+              energyIntensity={energyIntensity}
+              spectrumLevels={audioPanel?.spectrumLevels || []}
+              dropArmed={dropArmed}
+            />
+          )}
         </div>
 
         {audioPanel && (

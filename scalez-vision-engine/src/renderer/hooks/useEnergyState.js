@@ -71,9 +71,11 @@ export function useEnergyState({
 
     // Mild power compression so loud tracks do not pin the scale, while preserving
     // enough separation between calm, build, and peak sections.
-    const fullEnergy = Math.min(1, Math.pow(Math.max(0, fullBand), 1.08))
-    const lowEnergy = Math.min(1, Math.pow(Math.max(0, lowBand), 0.96))
-    const energy = fullEnergy * 0.78 + lowEnergy * 0.22
+    const fullEnergy = Math.min(1, Math.pow(Math.max(0, fullBand), 1.1))
+    const lowEnergy = Math.min(1, Math.pow(Math.max(0, lowBand), 0.98))
+    // Keep some low-end awareness for drops, but bias the classifier toward the
+    // full mix so bass-heavy dubstep intros do not read as full-track peaks.
+    const energy = fullEnergy * 0.88 + lowEnergy * 0.12
 
     // Recalibrate on first real signal, or when a new song starts after silence.
     if (energy < 0.035) {
@@ -115,8 +117,8 @@ export function useEnergyState({
 
     // Relative energy: >1.0 means louder than recent baseline, <1.0 means quieter.
     const rel = shortAvg / longAvg
-    const relNormalized = Math.min(1, Math.max(0, (rel - 0.92) / 0.42))
-    const sectionScore = shortAvg * 0.64 + relNormalized * 0.36
+    const relNormalized = Math.min(1, Math.max(0, (rel - 0.96) / 0.34))
+    const sectionScore = shortAvg * 0.72 + relNormalized * 0.28
 
     // Delta on the short window to detect directional movement.
     const delta = shortAvg - prevShort
@@ -140,16 +142,16 @@ export function useEnergyState({
         currentState === 'build' ||
         currentState === 'peak'
       const peakCandidate =
-        (wasPeak ? rel >= 1.03 : rel >= 1.08) &&
-        shortAvg >= 0.3 &&
-        fullEnergy >= 0.5 &&
-        sectionScore >= 0.46
+        (wasPeak ? rel >= 1.05 : rel >= 1.12) &&
+        shortAvg >= 0.36 &&
+        fullEnergy >= 0.58 &&
+        sectionScore >= 0.54
       const buildCandidate =
         isRising &&
-        rel >= 1.01 &&
-        shortAvg >= 0.2 &&
-        fullEnergy >= 0.26 &&
-        sectionScore >= 0.29
+        rel >= 1.03 &&
+        shortAvg >= 0.24 &&
+        fullEnergy >= 0.32 &&
+        sectionScore >= 0.34
 
       peakCandidateFramesRef.current = peakCandidate
         ? Math.min(12, peakCandidateFramesRef.current + 1)
@@ -169,13 +171,13 @@ export function useEnergyState({
         nextState = 'build'
       } else if (
         isFalling &&
-        shortAvg >= 0.16 &&
-        sectionScore >= 0.22 &&
+        shortAvg >= 0.2 &&
+        sectionScore >= 0.28 &&
         hadRecentHighEnergy
       ) {
         // Drop is the release after a high-energy moment, not just any decline.
         nextState = 'drop'
-      } else if (shortAvg < 0.14 || (sectionScore < 0.24 && rel < 1.01 && !isRising)) {
+      } else if (shortAvg < 0.18 || (sectionScore < 0.3 && rel < 1.02 && !isRising)) {
         // Calm requires genuinely low absolute energy or a low, settled section.
         nextState = 'calm'
       }
@@ -195,7 +197,7 @@ export function useEnergyState({
 
     // Intensity follows a blended section score so it reads the song more musically
     // than a pure relative ratio.
-    const intensity = Math.min(1, Math.max(0, (sectionScore - 0.16) / 0.5))
+    const intensity = Math.min(1, Math.max(0, (sectionScore - 0.22) / 0.46))
     // Only update state when intensity changes meaningfully to avoid render cascade
     if (Math.abs(intensity - lastIntensityRef.current) >= 0.015) {
       lastIntensityRef.current = intensity

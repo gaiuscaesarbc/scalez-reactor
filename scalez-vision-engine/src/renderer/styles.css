@@ -943,6 +943,90 @@ body.output-window #root {
   color: #ffd8e1;
 }
 
+/* Energy Dashboard */
+.energy-dashboard {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(8, 14, 34, 0.5);
+  border-radius: 8px;
+  border: 1px solid rgba(74, 180, 255, 0.2);
+}
+
+.energy-state-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(8, 14, 34, 0.8);
+  border: 1px solid rgba(74, 180, 255, 0.3);
+  border-left: 4px solid;
+  border-radius: 6px;
+}
+
+.energy-state-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.energy-intensity-bar {
+  height: 24px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.energy-intensity-fill {
+  height: 100%;
+  width: 0%;
+  transition: width 0.08s linear;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.energy-intensity-text {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: right;
+  color: var(--text-soft);
+}
+
+.drop-armed-indicator {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #ffb366;
+  text-transform: uppercase;
+  padding: 2px 4px;
+  background: rgba(255, 159, 64, 0.2);
+  border-radius: 2px;
+  text-align: center;
+}
+
+.energy-spectrum-display {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 60px;
+  padding: 8px 0;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+}
+
+.spectrum-bar {
+  flex: 1;
+  min-width: 0;
+  border-radius: 1px;
+  min-height: 2px;
+  transition: all 0.05s ease-out;
+  box-shadow: 0 0 6px currentColor;
+}
+
 .output-shell {
   min-height: 100vh;
   padding: 0;
