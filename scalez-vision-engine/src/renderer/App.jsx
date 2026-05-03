@@ -1260,6 +1260,8 @@ function ControlShell() {
         dropCount={dropSystem.dropCount}
         recentDropEvent={dropSystem.recentDropEvent}
         dropArmed={dropSystem.dropArmed}
+        energyStrobeCount={energyFxMapping.strobeCount}
+        dropStrobeCount={dropSystem.dropStrobeCount}
         clipVariationEnabled={clipVariationEnabled}
         onClipVariationChange={setClipVariationEnabled}
         autoEvolutionEnabled={autoEvolutionEnabled}

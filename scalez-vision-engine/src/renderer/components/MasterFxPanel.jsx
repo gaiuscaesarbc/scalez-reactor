@@ -49,6 +49,8 @@ export default memo(function MasterFxPanel({
   dropCount = 0,
   recentDropEvent = null,
   dropArmed = false,
+  energyStrobeCount = 0,
+  dropStrobeCount = 0,
   clipVariationEnabled = false,
   onClipVariationChange,
   autoEvolutionEnabled = false,
@@ -260,6 +262,8 @@ export default memo(function MasterFxPanel({
             smoothedEnergyFx={smoothedEnergyFx}
             smoothedDropFx={smoothedDropFx}
             energySystemEnabled={energySystemEnabled}
+            energyStrobeCount={energyStrobeCount}
+            dropStrobeCount={dropStrobeCount}
           />
         </div>
 
