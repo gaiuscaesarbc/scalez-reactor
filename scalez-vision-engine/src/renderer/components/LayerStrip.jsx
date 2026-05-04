@@ -124,6 +124,19 @@ export default memo(function LayerStrip({
                 />
               </label>
               <label className="control-line">
+                <span>Timeline Speed Link: {(audioLink.speedAmount ?? 0).toFixed(2)}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={audioLink.speedAmount ?? 0}
+                  onChange={(event) =>
+                    onAudioLinkChange?.(layer.layerIndex, 'speedAmount', Number(event.target.value))
+                  }
+                />
+              </label>
+              <label className="control-line">
                 <span>Threshold: {audioLink.threshold.toFixed(2)}</span>
                 <input
                   type="range"

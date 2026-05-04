@@ -197,9 +197,9 @@ function ControlShell() {
     brightness: { amount: 0.25, threshold: 0.03, mode: 'normal', source: 'low' },
   })
   const [layerAudioLinks, setLayerAudioLinks] = useState({
-    0: { amount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
-    1: { amount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
-    2: { amount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
+    0: { amount: 0, speedAmount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
+    1: { amount: 0, speedAmount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
+    2: { amount: 0, speedAmount: 0, threshold: 0.06, mode: 'normal', source: 'low' },
   })
   const [layerVideoMotion, setLayerVideoMotion] = useState({
     0: makeDefaultVideoMotion(),
@@ -906,7 +906,7 @@ function ControlShell() {
     setLayerAudioLinks((current) => ({
       ...current,
       [layerIndex]: {
-        ...(current[layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }),
+        ...(current[layerIndex] || { amount: 0, speedAmount: 0, threshold: 0.12, mode: 'normal', source: 'low' }),
         [field]: field === 'mode' || field === 'source' ? value : Number(value),
       },
     }))
@@ -996,9 +996,16 @@ function ControlShell() {
 
   const effectiveLayers = useMemo(
     () => layers.map((layer) => {
-      const link = layerAudioLinks[layer.layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }
+      const link = layerAudioLinks[layer.layerIndex] || {
+        amount: 0,
+        speedAmount: 0,
+        threshold: 0.12,
+        mode: 'normal',
+        source: 'low',
+      }
       const sourceLevel = getSpectrumSourceLevel(spectrumLevels, link.source)
       const linkAmount = clamp01(link.amount ?? 0)
+      const linkSpeedAmount = clamp01(link.speedAmount ?? 0)
       const reactiveLevel = getReactiveAmount(sourceLevel, link.threshold, link.mode, 1)
       // Modulate within a range so audio link remains visible even when base opacity is 1.
       const opacityFloor = Math.max(0, layer.opacity * (1 - linkAmount))
@@ -1023,12 +1030,17 @@ function ControlShell() {
         videoMotion.scaleAmount ?? 0,
       )
       const reactiveScale = Math.max(0.05, (videoMotion.scale ?? 1) + scaleBoost)
+      const reactiveTimelineAmount = clamp01((videoMotion.timelineAmount ?? 0) + reactiveLevel * linkSpeedAmount)
       const dropOpacityFloor = dropSystem.layerOpacityFloors[layer.layerIndex] ?? 0
 
       return {
         ...layer,
         opacity: Math.min(1, Math.max(reactiveOpacity, dropOpacityFloor)),
-        videoMotion: { ...videoMotion, scale: reactiveScale },
+        videoMotion: {
+          ...videoMotion,
+          scale: reactiveScale,
+          timelineAmount: reactiveTimelineAmount,
+        },
       }
     }),
     [layers, layerAudioLinks, layerVideoMotion, clipVideoMotion, spectrumLevels, dropSystem.layerOpacityFloors],
@@ -1307,7 +1319,13 @@ function ControlShell() {
               cueMode={cueMode}
               cuedSlotIndex={cuedSlots[layer.layerIndex] ?? null}
               midiFlashSlots={midiFlashSlots}
-              audioLink={layerAudioLinks[layer.layerIndex] || { amount: 0, threshold: 0.12, mode: 'normal', source: 'low' }}
+              audioLink={layerAudioLinks[layer.layerIndex] || {
+                amount: 0,
+                speedAmount: 0,
+                threshold: 0.12,
+                mode: 'normal',
+                source: 'low',
+              }}
               videoMotion={uiVideoMotion}
               onToggleVisible={setLayerVisible}
               onOpacityChange={setLayerOpacity}
