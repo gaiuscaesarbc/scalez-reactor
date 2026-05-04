@@ -460,12 +460,45 @@ function createOutputWindow() {
   )
   const savedOutputState = readWindowState()?.output || {}
 
+  // If no saved position, try to place output on a secondary display.
+  // If only one display is available, place it to the right of the control window
+  // so they don't overlap.
+  let finalBounds = bounds
+  if (!readWindowState()?.output?.bounds?.x) {
+    const allDisplays = screen.getAllDisplays()
+    const primaryDisplay = screen.getPrimaryDisplay()
+    const secondary = allDisplays.find((d) => d.id !== primaryDisplay.id)
+    if (secondary) {
+      const wa = secondary.workArea
+      finalBounds = {
+        x: wa.x,
+        y: wa.y,
+        width: Math.min(bounds.width, wa.width),
+        height: Math.min(bounds.height, wa.height),
+      }
+    } else {
+      // Single display: place output window to the right of control, or centered below
+      const controlBounds = controlWindow ? controlWindow.getBounds() : null
+      const wa = primaryDisplay.workArea
+      if (controlBounds) {
+        const rightX = controlBounds.x + controlBounds.width
+        const spaceRight = wa.x + wa.width - rightX
+        if (spaceRight >= 640) {
+          finalBounds = { x: rightX, y: wa.y, width: spaceRight, height: wa.height }
+        } else {
+          // Stack below
+          finalBounds = { x: wa.x, y: wa.y, width: Math.floor(wa.width / 2), height: Math.floor(wa.height / 2) }
+        }
+      }
+    }
+  }
+
   outputWindow = new BrowserWindow({
     title: 'SCALEZ Vision Engine - Output',
-    x: bounds.x,
-    y: bounds.y,
-    width: bounds.width,
-    height: bounds.height,
+    x: finalBounds.x,
+    y: finalBounds.y,
+    width: finalBounds.width,
+    height: finalBounds.height,
     backgroundColor: '#000000',
     autoHideMenuBar: true,
     webPreferences: {

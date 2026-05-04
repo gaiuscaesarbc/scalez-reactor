@@ -513,13 +513,11 @@ export default function OutputPreview({
         motion.speedAmount ?? 0,
       )
 
-      // Tempo-sync playback: scale by musicBPM / clipBPM so clips with different
-      // inherent tempos all land on the beat correctly.
+      // Tempo-sync playback: 140 BPM is the 1.0x baseline.
+      // Set the app BPM to your music's BPM via tap tempo or manual input
+      // and all clips will scale proportionally.
       const bpmValue = Number.isFinite(bpm) ? bpm : 140
-      const clipBpm = Number.isFinite(activeSlotObj?.clipBpm) && activeSlotObj.clipBpm >= 20
-        ? activeSlotObj.clipBpm
-        : 140
-      const tempoScale = Math.max(0.25, Math.min(2.5, bpmValue / clipBpm))
+      const tempoScale = Math.max(0.25, Math.min(2.5, bpmValue / 140))
 
       if (bounceEnabled) {
         const bounceBase = (motion.bounceSpeed ?? 1) * tempoScale
