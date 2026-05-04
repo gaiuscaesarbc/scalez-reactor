@@ -460,15 +460,24 @@ function createOutputWindow() {
   )
   const savedOutputState = readWindowState()?.output || {}
 
-  // If no saved position, try to place output on a secondary display.
-  // If only one display is available, place it to the right of the control window
-  // so they don't overlap.
+  const allDisplays = screen.getAllDisplays()
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const secondary = allDisplays.find((d) => d.id !== primaryDisplay.id)
+
+  // Determine which display the saved output position is on.
+  const savedDisplay = Number.isFinite(bounds.x) && Number.isFinite(bounds.y)
+    ? screen.getDisplayNearestPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) })
+    : null
+  const controlDisplay = controlWindow
+    ? screen.getDisplayNearestPoint(controlWindow.getBounds())
+    : primaryDisplay
+
   let finalBounds = bounds
-  if (!readWindowState()?.output?.bounds?.x) {
-    const allDisplays = screen.getAllDisplays()
-    const primaryDisplay = screen.getPrimaryDisplay()
-    const secondary = allDisplays.find((d) => d.id !== primaryDisplay.id)
-    if (secondary) {
+
+  if (secondary) {
+    // Always open output on a different display than control.
+    const outputIsOnControlDisplay = !savedDisplay || savedDisplay.id === controlDisplay.id
+    if (outputIsOnControlDisplay) {
       const wa = secondary.workArea
       finalBounds = {
         x: wa.x,
@@ -476,17 +485,22 @@ function createOutputWindow() {
         width: Math.min(bounds.width, wa.width),
         height: Math.min(bounds.height, wa.height),
       }
-    } else {
-      // Single display: place output window to the right of control, or centered below
-      const controlBounds = controlWindow ? controlWindow.getBounds() : null
-      const wa = primaryDisplay.workArea
-      if (controlBounds) {
+    }
+  } else {
+    // Single display: ensure output does not overlap the control window.
+    const controlBounds = controlWindow ? controlWindow.getBounds() : null
+    const wa = primaryDisplay.workArea
+    if (controlBounds) {
+      // Check for overlap (any intersection)
+      const overlapsX = bounds.x < controlBounds.x + controlBounds.width && bounds.x + bounds.width > controlBounds.x
+      const overlapsY = bounds.y < controlBounds.y + controlBounds.height && bounds.y + bounds.height > controlBounds.y
+      if (overlapsX && overlapsY) {
         const rightX = controlBounds.x + controlBounds.width
         const spaceRight = wa.x + wa.width - rightX
         if (spaceRight >= 640) {
           finalBounds = { x: rightX, y: wa.y, width: spaceRight, height: wa.height }
         } else {
-          // Stack below
+          // Not enough room right; put output in top-left quarter
           finalBounds = { x: wa.x, y: wa.y, width: Math.floor(wa.width / 2), height: Math.floor(wa.height / 2) }
         }
       }
