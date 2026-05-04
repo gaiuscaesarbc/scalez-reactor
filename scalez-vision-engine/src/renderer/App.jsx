@@ -21,6 +21,7 @@ import { useEnergyFxSmoother } from './hooks/useEnergyFxSmoother'
 import { useClipVariation } from './hooks/useClipVariation'
 import { useAutoEvolution } from './hooks/useAutoEvolution'
 import { useDropSystem } from './hooks/useDropSystem'
+import { useBeatSync } from './hooks/useBeatSync'
 import {
   buildOutputState,
   DEFAULT_MASTER_FX,
@@ -177,7 +178,7 @@ function ControlShell() {
     autosaveShow,
   } = useClipStore()
   const midiState = useMidiController()
-  const { bpm, tap: tapTempo, reset: resetTempo } = useTapTempo()
+  const { bpm, tap: tapTempo, reset: resetTempo, lastTapTimeRef } = useTapTempo()
   const [masterFx, setMasterFx] = useState(DEFAULT_MASTER_FX)
   const [blackout, setBlackout] = useState(false)
   const [audioSensitivity, setAudioSensitivity] = useState(0.75)
@@ -222,6 +223,8 @@ function ControlShell() {
   const [clipVariationEnabled, setClipVariationEnabled] = useState(false)
   const [autoEvolutionEnabled, setAutoEvolutionEnabled] = useState(false)
   const [autoEvolutionInterval, setAutoEvolutionInterval] = useState(60)
+  const [energyReactiveEnabled, setEnergyReactiveEnabled] = useState(true)
+  const [beatSyncEnabled, setBeatSyncEnabled] = useState(false)
 
     // Debug overlay toggle (PART 7)
     const [showEnergyDebug, setShowEnergyDebug] = useState(false)
@@ -772,9 +775,21 @@ function ControlShell() {
     intervalSeconds: autoEvolutionInterval,
     layers,
     masterFx,
+    energyState: activeEnergyState,
+    energyReactiveEnabled,
     onTriggerClip: triggerClip,
     onSetLayerOpacity: setLayerOpacity,
     onSetLayerBlendMode: setLayerBlendMode,
+  })
+
+  // Beat-Sync Clip Trigger (PART 5b)
+  useBeatSync({
+    enabled: beatSyncEnabled && energySystemEnabled,
+    bpm,
+    lastTapTimeRef,
+    energyState: activeEnergyState,
+    layers,
+    onTriggerClip: triggerClip,
   })
 
   const displayLayers = useMemo(() => layers.slice().reverse(), [layers])
@@ -1107,6 +1122,16 @@ function ControlShell() {
               </button>
             )}
           </div>
+          {/* Beat-sync toggle — quantizes clip triggers to beat grid on drop/peak */}
+          <button
+            type="button"
+            className={`pill${beatSyncEnabled ? ' is-active' : ''}`}
+            onClick={() => setBeatSyncEnabled((v) => !v)}
+            title={bpm ? `Beat-sync: trigger clips on beat at drop/peak (${bpm} BPM)` : 'Tap a BPM first to use beat-sync'}
+            disabled={!bpm}
+          >
+            ⏱ Beat Sync
+          </button>
           {/* Cue Mode */}
           <button
             type="button"
@@ -1324,6 +1349,12 @@ function ControlShell() {
           <SettingsPanel onClose={() => setShowSettings(false)} />
         </>
       )}
+      <EnergyDebugBadge
+        energyState={activeEnergyState}
+        energyIntensity={activeEnergyIntensity}
+        energyMetrics={energyMetrics}
+        enabled={showEnergyDebug}
+      />
     </main>
   )
 }

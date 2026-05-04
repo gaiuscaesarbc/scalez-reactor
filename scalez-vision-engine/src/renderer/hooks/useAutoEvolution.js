@@ -9,6 +9,8 @@ export function useAutoEvolution({
   intervalSeconds = 60,
   layers = [],
   masterFx = {},
+  energyState = 'calm',
+  energyReactiveEnabled = true,
   onTriggerClip = null,
   onSetLayerOpacity = null,
   onSetLayerBlendMode = null,
@@ -16,7 +18,10 @@ export function useAutoEvolution({
   const [isAutoEvolving, setIsAutoEvolving] = useState(false)
   const lastActionTimeRef = useRef(0)
   const pauseUntilRef = useRef(0)
+  const lastEnergyStateRef = useRef('calm')
+  const energyTriggerCooldownRef = useRef(0)
   const PAUSE_AFTER_USER_ACTION_MS = 2000
+  const ENERGY_TRIGGER_COOLDOWN_MS = 3000 // min gap between energy-reactive triggers
 
   // Get list of valid clips to randomly trigger
   const getValidLoadedClips = () => {
@@ -119,6 +124,44 @@ export function useAutoEvolution({
 
     return () => clearInterval(evolutionTimer)
   }, [enabled, intervalSeconds, layers, onTriggerClip, onSetLayerOpacity, onSetLayerBlendMode])
+
+  // Energy-reactive clip trigger: fires on drop or peak state transitions
+  useEffect(() => {
+    if (!enabled || !energyReactiveEnabled || !onTriggerClip) return
+
+    const now = Date.now()
+    const prevState = lastEnergyStateRef.current
+    lastEnergyStateRef.current = energyState
+
+    // Only react on fresh entry into drop or peak (not sustained)
+    const isNewDrop = energyState === 'drop' && prevState !== 'drop'
+    const isNewPeak = energyState === 'peak' && prevState !== 'peak'
+
+    if (!isNewDrop && !isNewPeak) return
+    if (now < pauseUntilRef.current) return
+    if (now < energyTriggerCooldownRef.current) return
+
+    const validClips = getValidLoadedClips()
+    if (validClips.length === 0) return
+
+    // For peak: prefer a clip from the top layer (highest energy = topmost layer)
+    // For drop: pick randomly across all layers
+    let clip
+    if (isNewPeak) {
+      const topLayerIndex = Math.max(...validClips.map((c) => c.layerIndex))
+      const topLayerClips = validClips.filter((c) => c.layerIndex === topLayerIndex)
+      clip = topLayerClips[Math.floor(Math.random() * topLayerClips.length)]
+    } else {
+      clip = validClips[Math.floor(Math.random() * validClips.length)]
+    }
+
+    try {
+      onTriggerClip(clip.layerIndex, clip.slotIndex)
+      energyTriggerCooldownRef.current = now + ENERGY_TRIGGER_COOLDOWN_MS
+    } catch {
+      // Silently ignore trigger failures
+    }
+  }, [energyState, enabled, energyReactiveEnabled, onTriggerClip, layers])
 
   // Called when user takes an action (any manual control)
   const pauseEvolution = () => {

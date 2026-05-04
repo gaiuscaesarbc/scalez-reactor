@@ -6,6 +6,7 @@ const RESET_THRESHOLD_MS = 2000 // Reset if gap between taps > 2 seconds
 export function useTapTempo() {
   const [bpm, setBpm] = useState(null)
   const tapTimesRef = useRef([])
+  const lastTapTimeRef = useRef(0)  // exposed for beat-sync quantization
 
   const tap = useCallback(() => {
     const now = performance.now()
@@ -17,6 +18,7 @@ export function useTapTempo() {
     }
 
     tapTimesRef.current.push(now)
+    lastTapTimeRef.current = now
 
     // Keep only the last MAX_TAPS taps
     if (tapTimesRef.current.length > MAX_TAPS) {
@@ -41,8 +43,9 @@ export function useTapTempo() {
 
   const reset = useCallback(() => {
     tapTimesRef.current = []
+    lastTapTimeRef.current = 0
     setBpm(null)
   }, [])
 
-  return { bpm, tap, reset }
+  return { bpm, tap, reset, lastTapTimeRef }
 }
