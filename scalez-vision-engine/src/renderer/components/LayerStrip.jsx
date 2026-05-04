@@ -424,23 +424,12 @@ export default memo(function LayerStrip({
                 </select>
               </label>
 
-              <label className="control-line">
-                <span>Timeline Spectrum</span>
-                <select
-                  value={videoMotion.timelineSource || 'low'}
-                  onChange={(event) =>
-                    onVideoMotionChange?.(layer.layerIndex, 'timelineSource', event.target.value)
-                  }
-                >
-                  <option value="sub">Sub</option>
-                  <option value="low">Low</option>
-                  <option value="lowMid">Low Mid</option>
-                  <option value="mid">Mid</option>
-                  <option value="presence">Presence</option>
-                  <option value="high">High</option>
-                  <option value="full">Full</option>
-                </select>
-              </label>
+              <BandPicker
+                label="Timeline Spectrum"
+                value={videoMotion.timelineSource || 'low'}
+                onChange={(band) => onVideoMotionChange?.(layer.layerIndex, 'timelineSource', band)}
+                spectrumRef={spectrumRef}
+              />
             </>
           )}
         </div>

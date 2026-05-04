@@ -549,11 +549,11 @@ export default function OutputPreview({
           const wasTriggered = Boolean(lastTimelineTriggerRef.current[layer.layerIndex])
           const isTriggered = timelineDrive > 0
           if (isTriggered && !wasTriggered) {
-            nextProgress = (prevProgress + timelineDrive * 0.18) % 1
+            nextProgress = (prevProgress + timelineDrive * 0.18 * tempoScale) % 1
           }
           lastTimelineTriggerRef.current[layer.layerIndex] = isTriggered
         } else {
-          nextProgress = (prevProgress + timelineDrive * 0.035) % 1
+          nextProgress = (prevProgress + timelineDrive * 0.035 * tempoScale) % 1
           lastTimelineTriggerRef.current[layer.layerIndex] = timelineDrive > 0
         }
 

@@ -18,7 +18,7 @@ const BANDS = [
  *   onChange     {fn}       — (bandKey: string) => void
  *   spectrumRef  {React.MutableRefObject} — ref to current spectrumLevels object (updated externally)
  */
-export default function BandPicker({ value, onChange, spectrumRef }) {
+export default function BandPicker({ value, onChange, spectrumRef, label = 'EQ Band' }) {
   const [open, setOpen] = useState(false)
   const barEls = useRef([])
   const rafRef = useRef(null)
@@ -57,7 +57,7 @@ export default function BandPicker({ value, onChange, spectrumRef }) {
         className="collapse-toggle band-picker__toggle"
         onClick={() => setOpen((v) => !v)}
       >
-        <span className="audio-reactivity-block__title">EQ Band: {selectedLabel}</span>
+        <span className="audio-reactivity-block__title">{label}: {selectedLabel}</span>
         <span className="collapse-toggle__icon">{open ? '▾' : '▸'}</span>
       </button>
 
