@@ -23,7 +23,10 @@ const FRAME_RATES = [
 ]
 
 export default memo(function SettingsPanel({
+  isOpen = false,
   onClose,
+  settings = {},
+  actions = {},
 }) {
   const [activeTab, setActiveTab] = useState('output')
 
@@ -37,8 +40,35 @@ export default memo(function SettingsPanel({
 
   // UI / Appearance settings
   const [uiScale, setUiScale] = useState(1.0)
-  const [showDevButtons, setShowDevButtons] = useState(true)
   const [overlayOpacity, setOverlayOpacity] = useState(0.52)
+
+  const {
+    performanceModeEnabled = false,
+    safeMode = false,
+    energyReactiveEnabled = true,
+    beatSyncEnabled = false,
+    showEnergyDebug = false,
+    dropThresholdLevel = 'medium',
+    energySystemEnabled = true,
+    autoEvolutionEnabled = false,
+    autoEvolutionInterval = 60,
+  } = settings
+
+  const {
+    setPerformanceModeEnabled = () => {},
+    setSafeMode = () => {},
+    setEnergyReactiveEnabled = () => {},
+    setBeatSyncEnabled = () => {},
+    setShowEnergyDebug = () => {},
+    setDropThresholdLevel = () => {},
+    setEnergySystemEnabled = () => {},
+    setAutoEvolutionEnabled = () => {},
+    setAutoEvolutionInterval = () => {},
+  } = actions
+
+  if (!isOpen) {
+    return null
+  }
 
   const selectedRes = RESOLUTIONS.find((r) => r.label === selectedResolution)
   const isCustom = selectedRes?.width === null
@@ -247,19 +277,99 @@ export default memo(function SettingsPanel({
             </div>
 
             <div className="settings-row">
-              <label className="settings-label">Show Dev Buttons</label>
+              <label className="settings-label">Performance Mode</label>
               <input
                 type="checkbox"
-                checked={showDevButtons}
-                onChange={(e) => setShowDevButtons(e.target.checked)}
+                checked={performanceModeEnabled}
+                onChange={(e) => setPerformanceModeEnabled(e.target.checked)}
               />
             </div>
 
             <div className="settings-row">
-              <label className="settings-label">Theme</label>
-              <select className="settings-select" defaultValue="dark">
-                <option value="dark">Dark (default)</option>
+              <label className="settings-label">Safe Mode</label>
+              <input
+                type="checkbox"
+                checked={safeMode}
+                onChange={(e) => setSafeMode(e.target.checked)}
+              />
+            </div>
+
+            <h3 style={{ marginTop: 20 }}>Energy & Debug</h3>
+
+            <div className="settings-row">
+              <label className="settings-label">Energy System Enabled</label>
+              <input
+                type="checkbox"
+                checked={energySystemEnabled}
+                onChange={(e) => setEnergySystemEnabled(e.target.checked)}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-label">Energy Reactive Triggers</label>
+              <input
+                type="checkbox"
+                checked={energyReactiveEnabled}
+                onChange={(e) => setEnergyReactiveEnabled(e.target.checked)}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-label">Beat Sync Enabled</label>
+              <input
+                type="checkbox"
+                checked={beatSyncEnabled}
+                onChange={(e) => setBeatSyncEnabled(e.target.checked)}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-label">Show Energy Debug Overlay</label>
+              <input
+                type="checkbox"
+                checked={showEnergyDebug}
+                onChange={(e) => setShowEnergyDebug(e.target.checked)}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-label">Drop Threshold</label>
+              <select
+                className="settings-select"
+                value={dropThresholdLevel}
+                onChange={(e) => setDropThresholdLevel(e.target.value)}
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
               </select>
+            </div>
+
+            <h3 style={{ marginTop: 20 }}>Evolution</h3>
+
+            <div className="settings-row">
+              <label className="settings-label">Auto Evolution</label>
+              <input
+                type="checkbox"
+                checked={autoEvolutionEnabled}
+                onChange={(e) => setAutoEvolutionEnabled(e.target.checked)}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-label">Auto Evolution Interval</label>
+              <div className="settings-row__right">
+                <input
+                  className="settings-range"
+                  type="range"
+                  min={15}
+                  max={180}
+                  step={5}
+                  value={autoEvolutionInterval}
+                  onChange={(e) => setAutoEvolutionInterval(Number(e.target.value))}
+                />
+                <span className="settings-value">{autoEvolutionInterval}s</span>
+              </div>
             </div>
           </div>
         )}

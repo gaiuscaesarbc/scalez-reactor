@@ -656,9 +656,18 @@ function ControlShell() {
     manualEnergyIntensity,
     dropSystemEnabled,
     dropThresholdLevel,
+    dropThreshold:
+      dropThresholdLevel === 'low'
+        ? 0
+        : dropThresholdLevel === 'medium'
+          ? 0.5
+          : 1,
     clipVariationEnabled,
     autoEvolutionEnabled,
     autoEvolutionInterval,
+    energyReactiveEnabled,
+    beatSyncEnabled,
+    showEnergyDebug,
   })
 
   const applyAppSettings = (settings) => {
@@ -683,10 +692,29 @@ function ControlShell() {
     if (settings.manualEnergyIntensity != null)
       setManualEnergyIntensity(settings.manualEnergyIntensity)
     if (settings.dropSystemEnabled != null) setDropSystemEnabled(settings.dropSystemEnabled)
-    if (settings.dropThresholdLevel) setDropThresholdLevel(settings.dropThresholdLevel)
+    if (typeof settings.dropThresholdLevel === 'string') {
+      setDropThresholdLevel(settings.dropThresholdLevel)
+    } else if (typeof settings.dropThreshold === 'number') {
+      if (settings.dropThreshold <= 0.33) {
+        setDropThresholdLevel('low')
+      } else if (settings.dropThreshold <= 0.66) {
+        setDropThresholdLevel('medium')
+      } else {
+        setDropThresholdLevel('high')
+      }
+    }
     if (settings.clipVariationEnabled != null) setClipVariationEnabled(settings.clipVariationEnabled)
     if (settings.autoEvolutionEnabled != null) setAutoEvolutionEnabled(settings.autoEvolutionEnabled)
     if (settings.autoEvolutionInterval != null) setAutoEvolutionInterval(settings.autoEvolutionInterval)
+    if (typeof settings.energyReactiveEnabled === 'boolean') {
+      setEnergyReactiveEnabled(settings.energyReactiveEnabled)
+    }
+    if (typeof settings.beatSyncEnabled === 'boolean') {
+      setBeatSyncEnabled(settings.beatSyncEnabled)
+    }
+    if (typeof settings.showEnergyDebug === 'boolean') {
+      setShowEnergyDebug(settings.showEnergyDebug)
+    }
   }
 
   // Autosave MIDI mappings with show data
@@ -1371,7 +1399,32 @@ function ControlShell() {
       {showSettings && (
         <>
           <div className="settings-backdrop" onClick={() => setShowSettings(false)} />
-          <SettingsPanel onClose={() => setShowSettings(false)} />
+          <SettingsPanel
+            isOpen={showSettings}
+            onClose={() => setShowSettings(false)}
+            settings={{
+              performanceModeEnabled: performanceMode.performanceModeEnabled,
+              safeMode,
+              energyReactiveEnabled,
+              beatSyncEnabled,
+              showEnergyDebug,
+              dropThresholdLevel,
+              energySystemEnabled,
+              autoEvolutionEnabled,
+              autoEvolutionInterval,
+            }}
+            actions={{
+              setPerformanceModeEnabled: performanceMode.setPerformanceModeEnabled,
+              setSafeMode,
+              setEnergyReactiveEnabled,
+              setBeatSyncEnabled,
+              setShowEnergyDebug,
+              setDropThresholdLevel,
+              setEnergySystemEnabled,
+              setAutoEvolutionEnabled,
+              setAutoEvolutionInterval,
+            }}
+          />
         </>
       )}
       <EnergyDebugBadge
