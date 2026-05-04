@@ -456,13 +456,20 @@ function createControlWindow() {
 }
 
 function createOutputWindow() {
+  const savedState = readWindowState()
   const bounds = getRestoredWindowBounds(
     'output',
     { width: 1920, height: 1080 },
     800,
     600,
   )
-  const savedOutputState = readWindowState()?.output || {}
+  const savedOutputState = savedState?.output || {}
+  const savedOutputBounds = savedOutputState?.bounds || {}
+  const hasSavedOutputBounds =
+    Number.isFinite(savedOutputBounds.x) &&
+    Number.isFinite(savedOutputBounds.y) &&
+    Number.isFinite(savedOutputBounds.width) &&
+    Number.isFinite(savedOutputBounds.height)
 
   const allDisplays = screen.getAllDisplays()
   const primaryDisplay = screen.getPrimaryDisplay()
@@ -478,7 +485,7 @@ function createOutputWindow() {
 
   let finalBounds = bounds
 
-  if (secondary) {
+  if (!hasSavedOutputBounds && secondary) {
     // Always open output on a different display than control.
     const outputIsOnControlDisplay = !savedDisplay || savedDisplay.id === controlDisplay.id
     if (outputIsOnControlDisplay) {
@@ -490,7 +497,7 @@ function createOutputWindow() {
         height: Math.min(bounds.height, wa.height),
       }
     }
-  } else {
+  } else if (!hasSavedOutputBounds) {
     // Single display: ensure output does not overlap the control window.
     const controlBounds = controlWindow ? controlWindow.getBounds() : null
     const wa = primaryDisplay.workArea
