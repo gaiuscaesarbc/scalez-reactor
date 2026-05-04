@@ -179,20 +179,24 @@ function persistWindowState(windowKey, nextPartial) {
   writeWindowState()
 }
 
+function persistLiveWindowBounds(windowRef, windowKey, supportsFullscreen = false) {
+  if (!windowRef || windowRef.isDestroyed()) {
+    return
+  }
+
+  const bounds = windowRef.isFullScreen() ? windowRef.getNormalBounds() : windowRef.getBounds()
+  persistWindowState(windowKey, {
+    bounds,
+    isFullScreen: supportsFullscreen ? windowRef.isFullScreen() : false,
+  })
+}
+
 function bindWindowStatePersistence(windowRef, windowKey, options = {}) {
   const supportsFullscreen = Boolean(options.supportsFullscreen)
   let saveTimer = null
 
   const saveNow = () => {
-    if (!windowRef || windowRef.isDestroyed()) {
-      return
-    }
-
-    const bounds = windowRef.isFullScreen() ? windowRef.getNormalBounds() : windowRef.getBounds()
-    persistWindowState(windowKey, {
-      bounds,
-      isFullScreen: supportsFullscreen ? windowRef.isFullScreen() : false,
-    })
+    persistLiveWindowBounds(windowRef, windowKey, supportsFullscreen)
   }
 
   const saveSoon = () => {
@@ -979,6 +983,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  // Final sync so all window positions persist exactly as they were when closing.
+  persistLiveWindowBounds(controlWindow, 'control', false)
+  persistLiveWindowBounds(outputWindow, 'output', true)
   if (nativePlaybackEngine) {
     nativePlaybackEngine.stop()
   }

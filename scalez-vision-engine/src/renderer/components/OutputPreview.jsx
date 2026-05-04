@@ -540,27 +540,19 @@ export default function OutputPreview({
         motion.timelineAmount ?? 0,
       )
 
-      if (timelineDrive > 0) {
-        const prevProgress = timelineProgressRef.current[layer.layerIndex] ?? 0
-        const mode = motion.timelineMode || 'pulse'
-        let nextProgress = prevProgress
-
-        if (mode === 'pulse') {
-          const wasTriggered = Boolean(lastTimelineTriggerRef.current[layer.layerIndex])
-          const isTriggered = timelineDrive > 0
-          if (isTriggered && !wasTriggered) {
-            nextProgress = (prevProgress + timelineDrive * 0.18 * tempoScale) % 1
-          }
-          lastTimelineTriggerRef.current[layer.layerIndex] = isTriggered
-        } else {
-          nextProgress = (prevProgress + timelineDrive * 0.035 * tempoScale) % 1
-          lastTimelineTriggerRef.current[layer.layerIndex] = timelineDrive > 0
+      if ((motion.timelineAmount ?? 0) > 0) {
+        // Timeline drive in speed mode: 0 level pauses, max level = 1.0x playback.
+        const drivenSpeed = Math.max(0, Math.min(1, timelineDrive))
+        if (drivenSpeed <= 0.0001) {
+          video.pause()
+          lastTimelineTriggerRef.current[layer.layerIndex] = false
+          return
         }
 
-        timelineProgressRef.current[layer.layerIndex] = nextProgress
-        video.currentTime = segmentStart + nextProgress * segmentLength
-      } else {
-        lastTimelineTriggerRef.current[layer.layerIndex] = false
+        video.playbackRate = drivenSpeed
+        lastTimelineTriggerRef.current[layer.layerIndex] = true
+        tryResumeVideo(video)
+        return
       }
 
       tryResumeVideo(video)
