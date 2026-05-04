@@ -1030,8 +1030,6 @@ function ControlShell() {
         videoMotion.scaleAmount ?? 0,
       )
       const reactiveScale = Math.max(0.05, (videoMotion.scale ?? 1) + scaleBoost)
-      const reactiveTimelineAmount = clamp01((videoMotion.timelineAmount ?? 0) + reactiveLevel * linkSpeedAmount)
-      const timelineSpeedLink = linkSpeedAmount > 0 ? clamp01(reactiveLevel * linkSpeedAmount) : null
       const dropOpacityFloor = dropSystem.layerOpacityFloors[layer.layerIndex] ?? 0
 
       return {
@@ -1040,8 +1038,10 @@ function ControlShell() {
         videoMotion: {
           ...videoMotion,
           scale: reactiveScale,
-          timelineAmount: reactiveTimelineAmount,
-          timelineSpeedLink,
+          timelineLinkAmount: linkSpeedAmount,
+          timelineLinkThreshold: clamp01(link.threshold ?? 0.12),
+          timelineLinkMode: link.mode || 'normal',
+          timelineLinkSource: link.source || 'low',
         },
       }
     }),

@@ -254,6 +254,7 @@ export default function OutputPreview({
   const timelineProgressRef = useRef({})
   const lastTimelineTriggerRef = useRef({})
   const timelineDynamicsRef = useRef({})
+  const timelineLinkDynamicsRef = useRef({})
   const activeClipKeyRef = useRef({})
   const bouncePhaseRef = useRef({})
   const reverseClipPathRef = useRef({})
@@ -535,11 +536,29 @@ export default function OutputPreview({
 
       const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
       const timelineAmount = clamp01(motion.timelineAmount ?? 0)
-      const linkedTimelineSpeed = Number.isFinite(motion.timelineSpeedLink)
-        ? clamp01(motion.timelineSpeedLink)
-        : null
+      const timelineLinkAmount = clamp01(motion.timelineLinkAmount ?? 0)
+      const timelineLinkSource = motion.timelineLinkSource || motion.timelineSource || 'low'
+      const timelineLinkMode = motion.timelineLinkMode || 'normal'
+      const timelineLinkThreshold = clamp01(motion.timelineLinkThreshold ?? 0.12)
+      const timelineLinkLevel = getSpectrumSourceLevel(spectrumLevels, timelineLinkSource, bassLevel)
 
-      if (linkedTimelineSpeed !== null) {
+      if (timelineLinkAmount > 0) {
+        let linkSourceLevel = clamp01(timelineLinkLevel)
+        if (timelineLinkMode === 'invert') {
+          linkSourceLevel = 1 - linkSourceLevel
+        }
+
+        const linkDyn =
+          timelineLinkDynamicsRef.current[layer.layerIndex] || { min: linkSourceLevel, max: linkSourceLevel }
+        const linkNextMin = Math.min(linkSourceLevel, linkDyn.min + 0.0018)
+        const linkNextMax = Math.max(linkSourceLevel, linkDyn.max - 0.0018)
+        timelineLinkDynamicsRef.current[layer.layerIndex] = { min: linkNextMin, max: linkNextMax }
+
+        const linkRange = Math.max(0.06, linkNextMax - linkNextMin)
+        const linkNormalizedBand = clamp01((linkSourceLevel - linkNextMin) / linkRange)
+        const linkNormalizedLevel = Math.max(0, linkNormalizedBand - timelineLinkThreshold) / Math.max(0.0001, 1 - timelineLinkThreshold)
+        const linkedTimelineSpeed = clamp01(smoothstep01(linkNormalizedLevel) * timelineLinkAmount)
+
         if (linkedTimelineSpeed <= 0.0001) {
           video.pause()
           lastTimelineTriggerRef.current[layer.layerIndex] = false
