@@ -521,18 +521,13 @@ export default function OutputPreview({
       const bpmValue = Number.isFinite(bpm) ? bpm : 140
       const tempoScale = Math.max(0.25, Math.min(2.5, bpmValue / 140))
 
-      if (bounceEnabled) {
-        const bounceBase = (motion.bounceSpeed ?? 1) * tempoScale
-        const bounceSpeed = Math.max(0.05, Math.min(4, bounceBase + speedBoost))
-        video.playbackRate = bounceSpeed
-        tryResumeVideo(video)
-        return
-      }
+      // Baseline playback rate. Timeline speed controls below are allowed to override
+      // this in both normal and bounce modes.
+      const baselinePlaybackRate = bounceEnabled
+        ? Math.max(0.05, Math.min(4, (motion.bounceSpeed ?? 1) * tempoScale + speedBoost))
+        : Math.max(0.05, Math.min(4, (motion.baseSpeed ?? 1) * tempoScale + speedBoost))
 
-      const basePlayback = (motion.baseSpeed ?? 1) * tempoScale
-      const playbackRate = Math.max(0.05, Math.min(4, basePlayback + speedBoost))
-
-      video.playbackRate = playbackRate
+      video.playbackRate = baselinePlaybackRate
 
       const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
       const timelineAmount = clamp01(motion.timelineAmount ?? 0)
