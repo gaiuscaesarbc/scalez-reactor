@@ -167,6 +167,7 @@ function ControlShell() {
     setLayerOpacity,
     setLayerBlendMode,
     clearLayer,
+    clearSlot,
     triggerClip,
     loadClipIntoSlot,
     markSlotFailed,
@@ -284,6 +285,18 @@ function ControlShell() {
       })
     }
   }, [cuedSlots, triggerClip])
+
+  const handleDeleteSlot = useCallback((layerIndex, slotIndex) => {
+    clearSlot(layerIndex, slotIndex)
+    setCuedSlots((prev) => {
+      if (prev[layerIndex] !== slotIndex) {
+        return prev
+      }
+      const next = { ...prev }
+      delete next[layerIndex]
+      return next
+    })
+  }, [clearSlot])
 
   // Focus toggle: only one layer can be focused at a time
   const handleFocusToggle = useCallback((layerIndex) => {
@@ -1266,6 +1279,7 @@ function ControlShell() {
               onClear={clearLayer}
               onTrigger={handleTriggerOrCue}
               onLoad={loadClipIntoSlot}
+              onDelete={handleDeleteSlot}
               onFocusToggle={handleFocusToggle}
               onLaunchCue={handleLaunchCue}
               onScrollRef={handleScrollRef}

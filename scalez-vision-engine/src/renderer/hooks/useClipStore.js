@@ -229,6 +229,32 @@ export function useClipStore() {
     )
   }
 
+  const clearSlot = (layerIndex, slotIndex) => {
+    updateLayers((current) =>
+      current.map((layer) => {
+        if (layer.layerIndex !== layerIndex) {
+          return layer
+        }
+
+        if (slotIndex < 0 || slotIndex >= layer.slots.length) {
+          return layer
+        }
+
+        const slots = layer.slots.map((slot) =>
+          slot.slotIndex === slotIndex ? makeDefaultSlot(slotIndex) : slot,
+        )
+
+        const nextActiveSlotIndex = layer.activeSlotIndex === slotIndex ? null : layer.activeSlotIndex
+
+        return {
+          ...layer,
+          slots,
+          activeSlotIndex: nextActiveSlotIndex,
+        }
+      }),
+    )
+  }
+
   const triggerClip = (layerIndex, slotIndex) => {
     updateLayers((current) =>
       current.map((layer) => {
@@ -703,6 +729,7 @@ export function useClipStore() {
     setLayerOpacity,
     setLayerBlendMode,
     clearLayer,
+    clearSlot,
     triggerClip,
     loadClipIntoSlot,
     markSlotFailed,

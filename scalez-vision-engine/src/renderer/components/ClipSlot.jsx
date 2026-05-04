@@ -66,6 +66,7 @@ function ClipSlot({
   cueMode,
   onTrigger,
   onLoad,
+  onDelete,
 }) {
   const label = slot.clipName || 'Empty slot'
   const isMissing = slot.status === 'missing'
@@ -133,13 +134,24 @@ function ClipSlot({
         </div>
       </button>
 
-      <button
-        type="button"
-        className="clip-slot__load"
-        onClick={() => onLoad(layerIndex, slot.slotIndex)}
-      >
-        {cueMode && isLoaded ? 'Cue' : 'Load'}
-      </button>
+      <div className="clip-slot__actions">
+        <button
+          type="button"
+          className="clip-slot__load"
+          onClick={() => onLoad(layerIndex, slot.slotIndex)}
+        >
+          {cueMode && isLoaded ? 'Cue' : 'Load'}
+        </button>
+        <button
+          type="button"
+          className="clip-slot__delete"
+          onClick={() => onDelete?.(layerIndex, slot.slotIndex)}
+          disabled={!isLoaded && !hasError}
+          title={isLoaded || hasError ? 'Delete clip from this slot' : 'Slot is already empty'}
+        >
+          Del
+        </button>
+      </div>
     </div>
   )
 }

@@ -20,6 +20,7 @@ export default memo(function LayerStrip({
   onClear,
   onTrigger,
   onLoad,
+  onDelete,
   onFocusToggle,
   onLaunchCue,
   onScrollRef,
@@ -488,6 +489,7 @@ export default memo(function LayerStrip({
                 cueMode={cueMode}
                 onTrigger={onTrigger}
                 onLoad={onLoad}
+                onDelete={onDelete}
               />
             ))}
           </div>
