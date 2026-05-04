@@ -533,16 +533,19 @@ export default function OutputPreview({
       video.playbackRate = playbackRate
 
       const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
-      const timelineDrive = getReactiveAmount(
-        timelineLevel,
-        motion.timelineThreshold ?? 0.2,
-        motion.timelineMode || 'pulse',
-        motion.timelineAmount ?? 0,
-      )
+      const timelineAmount = clamp01(motion.timelineAmount ?? 0)
 
-      if ((motion.timelineAmount ?? 0) > 0) {
+      if (timelineAmount > 0) {
         // Timeline drive in speed mode: 0 level pauses, max level = 1.0x playback.
-        const drivenSpeed = Math.max(0, Math.min(1, timelineDrive))
+        // Use a continuous map so this always responds, including when Timeline Mode is pulse.
+        const timelineMode = motion.timelineMode || 'normal'
+        const threshold = clamp01(motion.timelineThreshold ?? 0.2)
+        let sourceLevel = clamp01(timelineLevel)
+        if (timelineMode === 'invert') {
+          sourceLevel = 1 - sourceLevel
+        }
+        const normalizedLevel = Math.max(0, sourceLevel - threshold) / Math.max(0.0001, 1 - threshold)
+        const drivenSpeed = clamp01(smoothstep01(normalizedLevel) * timelineAmount)
         if (drivenSpeed <= 0.0001) {
           video.pause()
           lastTimelineTriggerRef.current[layer.layerIndex] = false
