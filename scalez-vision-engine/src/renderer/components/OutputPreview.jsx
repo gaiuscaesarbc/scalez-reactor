@@ -535,6 +535,22 @@ export default function OutputPreview({
 
       const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
       const timelineAmount = clamp01(motion.timelineAmount ?? 0)
+      const linkedTimelineSpeed = Number.isFinite(motion.timelineSpeedLink)
+        ? clamp01(motion.timelineSpeedLink)
+        : null
+
+      if (linkedTimelineSpeed !== null) {
+        if (linkedTimelineSpeed <= 0.0001) {
+          video.pause()
+          lastTimelineTriggerRef.current[layer.layerIndex] = false
+          return
+        }
+
+        video.playbackRate = linkedTimelineSpeed
+        lastTimelineTriggerRef.current[layer.layerIndex] = true
+        tryResumeVideo(video)
+        return
+      }
 
       if (timelineAmount > 0) {
         // Timeline drive in speed mode: 0 level pauses, max level = 1.0x playback.
