@@ -178,7 +178,7 @@ function ControlShell() {
     autosaveShow,
   } = useClipStore()
   const midiState = useMidiController()
-  const { bpm, tap: tapTempo, reset: resetTempo, lastTapTimeRef } = useTapTempo()
+  const { bpm, tap: tapTempo, reset: resetTempo, setManualBpm, lastTapTimeRef } = useTapTempo()
   const [masterFx, setMasterFx] = useState(DEFAULT_MASTER_FX)
   const [blackout, setBlackout] = useState(false)
   const [audioSensitivity, setAudioSensitivity] = useState(0.75)
@@ -1108,6 +1108,17 @@ function ControlShell() {
             >
               TAP
             </button>
+            <input
+              type="number"
+              className="tap-tempo__input"
+              min={20}
+              max={300}
+              step={1}
+              value={bpm ?? ''}
+              onChange={(event) => setManualBpm(event.target.value)}
+              placeholder="BPM"
+              title="Type BPM manually (20-300)"
+            />
             <span className="tap-tempo__bpm">
               {bpm !== null ? `${bpm} BPM` : '— BPM'}
             </span>

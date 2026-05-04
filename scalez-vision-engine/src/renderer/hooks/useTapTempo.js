@@ -47,5 +47,26 @@ export function useTapTempo() {
     setBpm(null)
   }, [])
 
-  return { bpm, tap, reset, lastTapTimeRef }
+  const setManualBpm = useCallback((value) => {
+    if (value === '' || value == null) {
+      tapTimesRef.current = []
+      lastTapTimeRef.current = 0
+      setBpm(null)
+      return
+    }
+
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric)) {
+      return
+    }
+
+    const clamped = Math.min(300, Math.max(20, Math.round(numeric)))
+    const now = performance.now()
+    // Seed tap history so next tap can immediately continue from manual tempo.
+    tapTimesRef.current = [now]
+    lastTapTimeRef.current = now
+    setBpm(clamped)
+  }, [])
+
+  return { bpm, tap, reset, setManualBpm, lastTapTimeRef }
 }
