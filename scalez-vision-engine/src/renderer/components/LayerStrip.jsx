@@ -21,6 +21,7 @@ export default memo(function LayerStrip({
   onTrigger,
   onLoad,
   onDelete,
+  onSetClipBpm,
   onFocusToggle,
   onLaunchCue,
   onScrollRef,
@@ -490,6 +491,7 @@ export default memo(function LayerStrip({
                 onTrigger={onTrigger}
                 onLoad={onLoad}
                 onDelete={onDelete}
+                onSetClipBpm={onSetClipBpm}
               />
             ))}
           </div>

@@ -67,6 +67,7 @@ function ClipSlot({
   onTrigger,
   onLoad,
   onDelete,
+  onSetClipBpm,
 }) {
   const label = slot.clipName || 'Empty slot'
   const isMissing = slot.status === 'missing'
@@ -152,6 +153,28 @@ function ClipSlot({
           Del
         </button>
       </div>
+      {isLoaded && (
+        <div className="clip-slot__bpm-row">
+          <label className="clip-slot__bpm-label" title="Clip BPM — set to the tempo of this video clip">
+            BPM
+          </label>
+          <input
+            type="number"
+            className="clip-slot__bpm-input"
+            min="20"
+            max="300"
+            step="1"
+            value={slot.clipBpm ?? 140}
+            onChange={(e) => {
+              const val = parseInt(e.target.value, 10)
+              if (Number.isFinite(val) && val >= 20 && val <= 300) {
+                onSetClipBpm?.(layerIndex, slot.slotIndex, val)
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   )
 }

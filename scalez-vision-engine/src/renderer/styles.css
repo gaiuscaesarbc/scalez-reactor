@@ -434,6 +434,36 @@ body.output-window #root {
   cursor: not-allowed;
 }
 
+.clip-slot__bpm-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 3px;
+}
+
+.clip-slot__bpm-label {
+  font-size: 9px;
+  color: #888;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+.clip-slot__bpm-input {
+  width: 48px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 3px;
+  color: #ccc;
+  font-size: 10px;
+  padding: 1px 3px;
+  text-align: center;
+}
+
+.clip-slot__bpm-input:focus {
+  outline: none;
+  border-color: #71d0ff;
+}
+
 .clip-slot.is-active .clip-slot__trigger {
   border-color: #71d0ff;
   box-shadow:

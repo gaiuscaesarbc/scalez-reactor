@@ -126,6 +126,7 @@ function makeDefaultSlot(slotIndex) {
     status: 'empty',
     errorMessage: '',
     preloadedVideoRef: null,
+    clipBpm: 140,
   }
 }
 
@@ -165,6 +166,7 @@ function normalizeStore(stored) {
         status: storedSlot.status || 'empty',
         errorMessage: storedSlot.errorMessage || '',
         preloadedVideoRef: null,
+        clipBpm: typeof storedSlot.clipBpm === 'number' && storedSlot.clipBpm >= 20 ? storedSlot.clipBpm : 140,
       }
     })
 
@@ -226,6 +228,19 @@ export function useClipStore() {
       current.map((layer) =>
         layer.layerIndex === layerIndex ? { ...layer, activeSlotIndex: null } : layer,
       ),
+    )
+  }
+
+  const setClipBpm = (layerIndex, slotIndex, clipBpm) => {
+    const bpmVal = typeof clipBpm === 'number' && clipBpm >= 20 ? Math.round(clipBpm) : 140
+    updateLayers((current) =>
+      current.map((layer) => {
+        if (layer.layerIndex !== layerIndex) return layer
+        const slots = layer.slots.map((slot) =>
+          slot.slotIndex === slotIndex ? { ...slot, clipBpm: bpmVal } : slot,
+        )
+        return { ...layer, slots }
+      }),
     )
   }
 
@@ -730,6 +745,7 @@ export function useClipStore() {
     setLayerBlendMode,
     clearLayer,
     clearSlot,
+    setClipBpm,
     triggerClip,
     loadClipIntoSlot,
     markSlotFailed,

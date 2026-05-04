@@ -170,6 +170,7 @@ function ControlShell() {
     setLayerBlendMode,
     clearLayer,
     clearSlot,
+    setClipBpm,
     triggerClip,
     loadClipIntoSlot,
     markSlotFailed,
@@ -1316,6 +1317,7 @@ function ControlShell() {
               onTrigger={handleTriggerOrCue}
               onLoad={loadClipIntoSlot}
               onDelete={handleDeleteSlot}
+              onSetClipBpm={setClipBpm}
               onFocusToggle={handleFocusToggle}
               onLaunchCue={handleLaunchCue}
               onScrollRef={handleScrollRef}
