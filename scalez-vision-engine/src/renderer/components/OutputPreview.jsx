@@ -198,6 +198,7 @@ export default function OutputPreview({
   bassLevel,
   spectrumLevels,
   spectrumBins,
+  bpm = 140,
   masterFx,
   blackout,
   showOverlays,
@@ -511,14 +512,20 @@ export default function OutputPreview({
         motion.speedMode || 'normal',
         motion.speedAmount ?? 0,
       )
+
+      // Tempo-sync playback: 140 BPM is the 1.0x baseline.
+      const bpmValue = Number.isFinite(bpm) ? bpm : 140
+      const tempoScale = Math.max(0.25, Math.min(2.5, bpmValue / 140))
+
       if (bounceEnabled) {
-        const bounceSpeed = Math.max(0.05, Math.min(4, (motion.bounceSpeed ?? 1) + speedBoost))
+        const bounceBase = (motion.bounceSpeed ?? 1) * tempoScale
+        const bounceSpeed = Math.max(0.05, Math.min(4, bounceBase + speedBoost))
         video.playbackRate = bounceSpeed
         tryResumeVideo(video)
         return
       }
 
-      const basePlayback = motion.baseSpeed ?? 1
+      const basePlayback = (motion.baseSpeed ?? 1) * tempoScale
       const playbackRate = Math.max(0.05, Math.min(4, basePlayback + speedBoost))
 
       video.playbackRate = playbackRate
@@ -556,7 +563,7 @@ export default function OutputPreview({
 
       tryResumeVideo(video)
     })
-  }, [layers, bassLevel, spectrumLevels])
+  }, [layers, bassLevel, spectrumLevels, bpm])
 
   useEffect(() => {
     // Safety net: after any layer/motion change, keep active preview videos playing.

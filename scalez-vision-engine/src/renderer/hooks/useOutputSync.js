@@ -13,6 +13,7 @@ export function buildOutputState({
   blackout,
   bassLevel = 0.2,
   spectrumLevels = null,
+  bpm = 140,
   energySystemEnabled = false,
   smoothedEnergyFx = null,
   energyStrobeCount = 0,
@@ -36,6 +37,9 @@ export function buildOutputState({
         presence: 0,
         high: 0,
       },
+    },
+    tempo: {
+      bpm: Number.isFinite(bpm) ? bpm : 140,
     },
     energy: {
       enabled: energySystemEnabled,

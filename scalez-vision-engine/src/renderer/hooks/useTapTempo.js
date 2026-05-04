@@ -2,11 +2,12 @@ import { useState, useRef, useCallback } from 'react'
 
 const MAX_TAPS = 8
 const RESET_THRESHOLD_MS = 2000 // Reset if gap between taps > 2 seconds
+const DEFAULT_BPM = 140
 
 export function useTapTempo() {
-  const [bpm, setBpm] = useState(null)
+  const [bpm, setBpm] = useState(DEFAULT_BPM)
   const tapTimesRef = useRef([])
-  const lastTapTimeRef = useRef(0)  // exposed for beat-sync quantization
+  const lastTapTimeRef = useRef(typeof performance !== 'undefined' ? performance.now() : 0)  // exposed for beat-sync quantization
 
   const tap = useCallback(() => {
     const now = performance.now()
@@ -42,16 +43,18 @@ export function useTapTempo() {
   }, [])
 
   const reset = useCallback(() => {
-    tapTimesRef.current = []
-    lastTapTimeRef.current = 0
-    setBpm(null)
+    const now = typeof performance !== 'undefined' ? performance.now() : 0
+    tapTimesRef.current = [now]
+    lastTapTimeRef.current = now
+    setBpm(DEFAULT_BPM)
   }, [])
 
   const setManualBpm = useCallback((value) => {
     if (value === '' || value == null) {
-      tapTimesRef.current = []
-      lastTapTimeRef.current = 0
-      setBpm(null)
+      const now = typeof performance !== 'undefined' ? performance.now() : 0
+      tapTimesRef.current = [now]
+      lastTapTimeRef.current = now
+      setBpm(DEFAULT_BPM)
       return
     }
 

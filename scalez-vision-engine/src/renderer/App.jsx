@@ -134,6 +134,7 @@ function OutputShell() {
   const energyIntensity = syncedState?.energy?.intensity ?? 0
   const smoothedDropFx = syncedState?.drop?.smoothedFx || null
   const dropStrobeCount = syncedState?.drop?.strobeCount ?? 0
+  const bpm = syncedState?.tempo?.bpm ?? 140
 
   return (
     <main className="output-shell">
@@ -142,6 +143,7 @@ function OutputShell() {
         fps={60}
         bassLevel={bassLevel}
         spectrumLevels={spectrumLevels}
+        bpm={bpm}
         masterFx={masterFx}
         blackout={blackout}
         showOverlays={false}
@@ -662,6 +664,7 @@ function ControlShell() {
         : dropThresholdLevel === 'medium'
           ? 0.5
           : 1,
+    bpm,
     clipVariationEnabled,
     autoEvolutionEnabled,
     autoEvolutionInterval,
@@ -702,6 +705,9 @@ function ControlShell() {
       } else {
         setDropThresholdLevel('high')
       }
+    }
+    if (typeof settings.bpm === 'number') {
+      setManualBpm(settings.bpm)
     }
     if (settings.clipVariationEnabled != null) setClipVariationEnabled(settings.clipVariationEnabled)
     if (settings.autoEvolutionEnabled != null) setAutoEvolutionEnabled(settings.autoEvolutionEnabled)
@@ -1095,6 +1101,7 @@ function ControlShell() {
       blackout,
       bassLevel,
       spectrumLevels,
+      bpm,
       energySystemEnabled,
       smoothedEnergyFx,
       energyStrobeCount: energyFxMapping.strobeCount,
@@ -1104,7 +1111,7 @@ function ControlShell() {
       dropStrobeCount: dropSystem.dropStrobeCount,
     })
     window.scalezApi?.publishOutputState?.(nextState)
-  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels, energySystemEnabled, smoothedEnergyFx, energyFxMapping.strobeCount, activeEnergyState, activeEnergyIntensity, smoothedDropFx, dropSystem.dropStrobeCount])
+  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels, bpm, energySystemEnabled, smoothedEnergyFx, energyFxMapping.strobeCount, activeEnergyState, activeEnergyIntensity, smoothedDropFx, dropSystem.dropStrobeCount])
 
   return (
     <main className={`control-shell${compactMode ? ' is-compact' : ''}`}>
@@ -1256,6 +1263,7 @@ function ControlShell() {
         bassLevel={bassLevel}
         spectrumLevels={spectrumLevels}
         spectrumBins={spectrumBins}
+        bpm={bpm}
         masterFx={effectiveMasterFx}
         blackout={blackout}
         showOverlays
