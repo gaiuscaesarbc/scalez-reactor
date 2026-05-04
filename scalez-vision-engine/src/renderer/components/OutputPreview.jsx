@@ -253,6 +253,7 @@ export default function OutputPreview({
   const videoErrorLogRef = useRef({})
   const timelineProgressRef = useRef({})
   const lastTimelineTriggerRef = useRef({})
+  const timelineDynamicsRef = useRef({})
   const activeClipKeyRef = useRef({})
   const bouncePhaseRef = useRef({})
   const reverseClipPathRef = useRef({})
@@ -544,7 +545,16 @@ export default function OutputPreview({
         if (timelineMode === 'invert') {
           sourceLevel = 1 - sourceLevel
         }
-        const normalizedLevel = Math.max(0, sourceLevel - threshold) / Math.max(0.0001, 1 - threshold)
+
+        // Adaptive normalization keeps drive responsive even when a band sits near high values.
+        const dyn = timelineDynamicsRef.current[layer.layerIndex] || { min: sourceLevel, max: sourceLevel }
+        const nextMin = Math.min(sourceLevel, dyn.min + 0.0018)
+        const nextMax = Math.max(sourceLevel, dyn.max - 0.0018)
+        timelineDynamicsRef.current[layer.layerIndex] = { min: nextMin, max: nextMax }
+
+        const dynamicRange = Math.max(0.06, nextMax - nextMin)
+        const normalizedBand = clamp01((sourceLevel - nextMin) / dynamicRange)
+        const normalizedLevel = Math.max(0, normalizedBand - threshold) / Math.max(0.0001, 1 - threshold)
         const drivenSpeed = clamp01(smoothstep01(normalizedLevel) * timelineAmount)
         if (drivenSpeed <= 0.0001) {
           video.pause()
