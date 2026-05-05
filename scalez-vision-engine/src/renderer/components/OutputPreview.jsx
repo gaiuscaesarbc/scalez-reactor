@@ -1363,6 +1363,8 @@ export default function OutputPreview({
       sourceCtx.setTransform(1, 0, 0, 1, 0, 0)
       sourceCtx.clearRect(0, 0, width, height)
 
+      const cx = width * 0.5
+      const cy = height * 0.5
       const safeIntensity = clamp01(params.intensity)
       const blendAmount = smoothstep01(safeIntensity)
       const safeSegments = Number.isFinite(params.segments) ? params.segments : 8
