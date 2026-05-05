@@ -1282,8 +1282,8 @@ export default function OutputPreview({
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // The canvas now carries the full source composite when kaleido is active.
-  const baseLayerOpacity = kaleidoActive ? 0 : 1
+  // Never hide the base video when kaleido engages; the effect should layer on top, not replace it.
+  const baseLayerOpacity = 1
   const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
   const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
@@ -1557,7 +1557,7 @@ export default function OutputPreview({
           <canvas
             ref={kaleidoCanvasRef}
             className="kaleido-canvas"
-            style={{ opacity: '1' }}
+            style={{ opacity: (0.12 + kaleidoIntensity * 0.58).toFixed(3) }}
           />
         )}
 
