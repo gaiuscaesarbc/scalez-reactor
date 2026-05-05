@@ -1262,7 +1262,9 @@ export default function OutputPreview({
     0,
   )
 
-  const kaleidoBaseAmount = clamp01(masterFx?.kaleido ?? 0)
+  // Defensive normalize in case stale saved state or sync payload sends out-of-range values.
+  const rawKaleidoAmount = Number.isFinite(masterFx?.kaleido) ? masterFx.kaleido : 0
+  const kaleidoBaseAmount = clamp01(rawKaleidoAmount)
   const kaleidoAudioAmount = clamp01(masterFx?.kaleidoAudio ?? 0)
   const kaleidoSource = masterFx?.kaleidoSource || 'mid'
   const kaleidoBandLevel = clamp01(getSpectrumSourceLevel(spectrumLevels, kaleidoSource, bassLevel))
@@ -1279,7 +1281,8 @@ export default function OutputPreview({
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * 90 + kaleidoBandLevel * kaleidoAudioAmount * 150
   const kaleidoActive = kaleidoIntensity > 0.01
-  const baseLayerOpacity = kaleidoActive ? 0 : 1
+  // Keep a faint base video visible so transient canvas draw gaps never become full black frames.
+  const baseLayerOpacity = kaleidoActive ? 0.2 : 1
   const kaleidoZoom = 1.14 + kaleidoIntensity * 0.28 + kaleidoBandLevel * kaleidoAudioAmount * 0.2
   const kaleidoOffset = 4 + kaleidoIntensity * 8 + kaleidoBandLevel * kaleidoAudioAmount * 6
   const kaleidoCoreSize = 10 + (1 - kaleidoIntensity) * 10
@@ -1331,16 +1334,20 @@ export default function OutputPreview({
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, width, height)
-      ctx.fillStyle = '#000'
-      ctx.fillRect(0, 0, width, height)
 
       const cx = width * 0.5
       const cy = height * 0.5
       const radius = Math.hypot(width, height)
-      const segments = Math.max(6, Math.min(14, Math.round(params.segments)))
+      const safeIntensity = clamp01(params.intensity)
+      const safeSegments = Number.isFinite(params.segments) ? params.segments : 8
+      const segments = Math.max(6, Math.min(14, Math.round(safeSegments)))
       const step = (Math.PI * 2) / segments
       const now = performance.now() * 0.001
-      const sampleRotate = (now * params.spinDegPerSec * Math.PI) / 180
+      const safeSpin = Number.isFinite(params.spinDegPerSec) ? Math.max(-720, Math.min(720, params.spinDegPerSec)) : 0
+      const sampleRotate = (now * safeSpin * Math.PI) / 180
+      const safeZoom = Number.isFinite(params.zoom) ? Math.max(1.02, Math.min(1.55, params.zoom)) : 1.12
+      const safeOffsetPct = Number.isFinite(params.offsetPct) ? Math.max(0.01, Math.min(0.14, params.offsetPct)) : 0.08
+      let drewAnyVideo = false
 
       for (let i = 0; i < segments; i += 1) {
         ctx.save()
@@ -1359,9 +1366,9 @@ export default function OutputPreview({
         }
 
         ctx.rotate(sampleRotate)
-        const sliceScale = 1.03 + params.intensity * 0.16
-        ctx.scale(params.zoom * sliceScale, params.zoom * sliceScale)
-        ctx.translate(0, -height * params.offsetPct)
+        const sliceScale = 1.03 + safeIntensity * 0.16
+        ctx.scale(safeZoom * sliceScale, safeZoom * sliceScale)
+        ctx.translate(0, -height * safeOffsetPct)
 
         const currentLayers = latestLayersRef.current || []
         currentLayers.forEach((layer) => {
@@ -1383,9 +1390,15 @@ export default function OutputPreview({
           ctx.scale(scale, scale)
           ctx.drawImage(srcVideo, -width * 0.5, -height * 0.5, width, height)
           ctx.restore()
+          drewAnyVideo = true
         })
 
         ctx.restore()
+      }
+
+      if (!drewAnyVideo) {
+        frameId = requestAnimationFrame(draw)
+        return
       }
 
       const core = Math.max(4, (params.coreSizePct / 100) * Math.min(width, height))
