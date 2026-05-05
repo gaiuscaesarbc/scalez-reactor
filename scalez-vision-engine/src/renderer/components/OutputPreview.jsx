@@ -1281,7 +1281,7 @@ export default function OutputPreview({
   const kaleidoActive = kaleidoIntensity > 0.01
   const baseLayerOpacity = kaleidoActive ? 0 : 1
   const kaleidoZoom = 1.14 + kaleidoIntensity * 0.28 + kaleidoBandLevel * kaleidoAudioAmount * 0.2
-  const kaleidoOffset = 8 + kaleidoIntensity * 22 + kaleidoBandLevel * 8
+  const kaleidoOffset = 4 + kaleidoIntensity * 8 + kaleidoBandLevel * kaleidoAudioAmount * 6
   const kaleidoCoreSize = 10 + (1 - kaleidoIntensity) * 10
 
   kaleidoParamsRef.current = {
@@ -1290,7 +1290,7 @@ export default function OutputPreview({
     segments: kaleidoSegments,
     spinDegPerSec: kaleidoSpinDegPerSec,
     zoom: kaleidoZoom,
-    offsetPct: kaleidoOffset / 100,
+    offsetPct: Math.max(0.03, Math.min(0.18, kaleidoOffset / 100)),
     coreSizePct: kaleidoCoreSize,
   }
 
