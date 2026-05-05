@@ -1276,16 +1276,16 @@ export default function OutputPreview({
     : 8
   const kaleidoSegments = Math.max(
     6,
-    Math.min(14, kaleidoBaseSegments + Math.round(kaleidoBandLevel * kaleidoAudioAmount * kaleidoBaseAmount * 5)),
+    Math.min(14, kaleidoBaseSegments + Math.round(kaleidoIntensity * 6 + kaleidoBandLevel * kaleidoAudioAmount * 3)),
   )
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
-  const kaleidoSpinDegPerSec = kaleidoSpinBase * 90 + kaleidoBandLevel * kaleidoAudioAmount * 150
+  const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // Keep a faint base video visible so transient canvas draw gaps never become full black frames.
-  const baseLayerOpacity = kaleidoActive ? 0.2 : 1
-  const kaleidoZoom = 1.14 + kaleidoIntensity * 0.28 + kaleidoBandLevel * kaleidoAudioAmount * 0.2
-  const kaleidoOffset = 4 + kaleidoIntensity * 8 + kaleidoBandLevel * kaleidoAudioAmount * 6
-  const kaleidoCoreSize = 10 + (1 - kaleidoIntensity) * 10
+  // Crossfade base video by intensity so amount visually morphs instead of only darkening.
+  const baseLayerOpacity = kaleidoActive ? Math.max(0.42, 1 - kaleidoIntensity * 0.58) : 1
+  const kaleidoZoom = 1.03 + kaleidoIntensity * 0.62 + kaleidoBandLevel * kaleidoAudioAmount * 0.16
+  const kaleidoOffset = 2 + kaleidoIntensity * 10 + kaleidoBandLevel * kaleidoAudioAmount * 4
+  const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
 
   kaleidoParamsRef.current = {
     active: kaleidoActive,
@@ -1402,10 +1402,9 @@ export default function OutputPreview({
       }
 
       const core = Math.max(4, (params.coreSizePct / 100) * Math.min(width, height))
-      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, core * 2.6)
-      grad.addColorStop(0, 'rgba(0,0,0,0.98)')
-      grad.addColorStop(0.36, 'rgba(0,0,0,0.82)')
-      grad.addColorStop(0.72, 'rgba(0,0,0,0.2)')
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, core * 2.1)
+      grad.addColorStop(0, 'rgba(0,0,0,0.18)')
+      grad.addColorStop(0.45, 'rgba(0,0,0,0.08)')
       grad.addColorStop(1, 'rgba(0,0,0,0)')
       ctx.globalCompositeOperation = 'source-over'
       ctx.globalAlpha = 1
@@ -1543,7 +1542,7 @@ export default function OutputPreview({
           <canvas
             ref={kaleidoCanvasRef}
             className="kaleido-canvas"
-            style={{ opacity: (0.28 + kaleidoIntensity * 0.72).toFixed(3) }}
+            style={{ opacity: (0.22 + kaleidoIntensity * 0.74).toFixed(3) }}
           />
         )}
 
