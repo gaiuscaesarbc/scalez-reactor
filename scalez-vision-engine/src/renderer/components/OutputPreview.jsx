@@ -1282,8 +1282,8 @@ export default function OutputPreview({
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // Never hide the base video when kaleido engages; the effect should layer on top, not replace it.
-  const baseLayerOpacity = 1
+  // Crossfade toward kaleido without ever removing the base frame completely.
+  const baseLayerOpacity = kaleidoActive ? Math.max(0.55, 1 - kaleidoIntensity * 0.45) : 1
   const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
   const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
@@ -1394,7 +1394,7 @@ export default function OutputPreview({
       }
 
       ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = 1
+      ctx.globalAlpha = 0.18 + blendAmount * 0.24
       ctx.drawImage(sourceCanvas, 0, 0, width, height)
 
       for (let i = 0; i < segments; i += 1) {
@@ -1413,16 +1413,16 @@ export default function OutputPreview({
           ctx.scale(-1, 1)
         }
 
-        const twist = step * (0.1 + safeIntensity * 0.72)
-        const sliceScale = 1.04 + safeIntensity * 0.52
-        const sliceOffsetX = width * (0.12 + safeIntensity * 0.22)
-        const sliceOffsetY = height * safeOffsetPct * 0.9
+        const twist = step * (0.22 + safeIntensity * 0.95)
+        const sliceScale = 1.12 + safeIntensity * 0.7
+        const sliceOffsetX = width * (0.2 + safeIntensity * 0.28)
+        const sliceOffsetY = height * (safeOffsetPct * 0.65 + safeIntensity * 0.08)
         ctx.rotate(sampleRotate + (i % 2 === 0 ? twist : -twist))
         ctx.scale(safeZoom * sliceScale, safeZoom * sliceScale)
         ctx.translate(i % 2 === 0 ? sliceOffsetX : -sliceOffsetX, -sliceOffsetY)
 
-        ctx.globalAlpha = Math.min(1, 0.18 + blendAmount * 0.92)
-        ctx.globalCompositeOperation = i % 2 === 0 ? 'screen' : 'lighter'
+        ctx.globalAlpha = Math.min(1, 0.42 + blendAmount * 0.58)
+        ctx.globalCompositeOperation = 'source-over'
         ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
 
         ctx.restore()
@@ -1557,7 +1557,7 @@ export default function OutputPreview({
           <canvas
             ref={kaleidoCanvasRef}
             className="kaleido-canvas"
-            style={{ opacity: (0.12 + kaleidoIntensity * 0.58).toFixed(3) }}
+            style={{ opacity: (0.45 + kaleidoIntensity * 0.45).toFixed(3) }}
           />
         )}
 
