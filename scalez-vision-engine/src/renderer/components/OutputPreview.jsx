@@ -1405,58 +1405,95 @@ export default function OutputPreview({
         return
       }
 
-      sampleCtx.setTransform(1, 0, 0, 1, 0, 0)
-      sampleCtx.clearRect(0, 0, processWidth, processHeight)
-      sampleCtx.drawImage(sourceCanvas, 0, 0, processWidth, processHeight)
+      let renderedPolarRemap = false
+      try {
+        sampleCtx.setTransform(1, 0, 0, 1, 0, 0)
+        sampleCtx.clearRect(0, 0, processWidth, processHeight)
+        sampleCtx.drawImage(sourceCanvas, 0, 0, processWidth, processHeight)
 
-      const sourceImage = sampleCtx.getImageData(0, 0, processWidth, processHeight)
-      const outputImage = sampleCtx.createImageData(processWidth, processHeight)
-      const sourcePixels = sourceImage.data
-      const outputPixels = outputImage.data
-      const procCx = processWidth * 0.5
-      const procCy = processHeight * 0.5
-      const sourceCx = procCx + Math.cos(sampleRotate * 0.7) * processWidth * safeIntensity * 0.08
-      const sourceCy = procCy - processHeight * safeOffsetPct * 0.28 + Math.sin(sampleRotate * 0.45) * processHeight * safeIntensity * 0.04
-      const segmentAngle = (Math.PI * 2) / segments
-      const maxRadius = Math.hypot(procCx, procCy)
-      const twistStrength = 0.3 + safeIntensity * 2.4
-      const radialZoom = safeZoom * (1 + safeIntensity * 0.45)
+        const sourceImage = sampleCtx.getImageData(0, 0, processWidth, processHeight)
+        const outputImage = sampleCtx.createImageData(processWidth, processHeight)
+        const sourcePixels = sourceImage.data
+        const outputPixels = outputImage.data
+        const procCx = processWidth * 0.5
+        const procCy = processHeight * 0.5
+        const sourceCx = procCx + Math.cos(sampleRotate * 0.7) * processWidth * safeIntensity * 0.08
+        const sourceCy = procCy - processHeight * safeOffsetPct * 0.28 + Math.sin(sampleRotate * 0.45) * processHeight * safeIntensity * 0.04
+        const segmentAngle = (Math.PI * 2) / segments
+        const maxRadius = Math.hypot(procCx, procCy)
+        const twistStrength = 0.3 + safeIntensity * 2.4
+        const radialZoom = safeZoom * (1 + safeIntensity * 0.45)
 
-      for (let y = 0; y < processHeight; y += 1) {
-        const dy = y - procCy
-        for (let x = 0; x < processWidth; x += 1) {
-          const dx = x - procCx
-          const radius = Math.hypot(dx, dy)
-          const radiusNorm = maxRadius > 0 ? radius / maxRadius : 0
-          let angle = Math.atan2(dy, dx) - sampleRotate * (0.55 + safeIntensity * 0.35)
-          angle = ((angle % segmentAngle) + segmentAngle) % segmentAngle
-          if (angle > segmentAngle * 0.5) {
-            angle = segmentAngle - angle
+        for (let y = 0; y < processHeight; y += 1) {
+          const dy = y - procCy
+          for (let x = 0; x < processWidth; x += 1) {
+            const dx = x - procCx
+            const radius = Math.hypot(dx, dy)
+            const radiusNorm = maxRadius > 0 ? radius / maxRadius : 0
+            let angle = Math.atan2(dy, dx) - sampleRotate * (0.55 + safeIntensity * 0.35)
+            angle = ((angle % segmentAngle) + segmentAngle) % segmentAngle
+            if (angle > segmentAngle * 0.5) {
+              angle = segmentAngle - angle
+            }
+
+            const sampleAngle = angle + sampleRotate * 0.25 + radiusNorm * twistStrength
+            const sampleRadius = radius / radialZoom
+            const warpX = Math.sin(radiusNorm * 8 - sampleRotate * 0.8) * processWidth * safeIntensity * 0.025
+            const warpY = Math.cos(radiusNorm * 7 + sampleRotate * 0.6) * processHeight * safeIntensity * 0.025
+            const sampleX = Math.max(0, Math.min(processWidth - 1, Math.round(sourceCx + Math.cos(sampleAngle) * sampleRadius + warpX)))
+            const sampleY = Math.max(0, Math.min(processHeight - 1, Math.round(sourceCy + Math.sin(sampleAngle) * sampleRadius + warpY)))
+            const sourceIndex = (sampleY * processWidth + sampleX) * 4
+            const outputIndex = (y * processWidth + x) * 4
+
+            outputPixels[outputIndex] = sourcePixels[sourceIndex]
+            outputPixels[outputIndex + 1] = sourcePixels[sourceIndex + 1]
+            outputPixels[outputIndex + 2] = sourcePixels[sourceIndex + 2]
+            outputPixels[outputIndex + 3] = sourcePixels[sourceIndex + 3]
           }
-
-          const sampleAngle = angle + sampleRotate * 0.25 + radiusNorm * twistStrength
-          const sampleRadius = radius / radialZoom
-          const warpX = Math.sin(radiusNorm * 8 - sampleRotate * 0.8) * processWidth * safeIntensity * 0.025
-          const warpY = Math.cos(radiusNorm * 7 + sampleRotate * 0.6) * processHeight * safeIntensity * 0.025
-          const sampleX = Math.max(0, Math.min(processWidth - 1, Math.round(sourceCx + Math.cos(sampleAngle) * sampleRadius + warpX)))
-          const sampleY = Math.max(0, Math.min(processHeight - 1, Math.round(sourceCy + Math.sin(sampleAngle) * sampleRadius + warpY)))
-          const sourceIndex = (sampleY * processWidth + sampleX) * 4
-          const outputIndex = (y * processWidth + x) * 4
-
-          outputPixels[outputIndex] = sourcePixels[sourceIndex]
-          outputPixels[outputIndex + 1] = sourcePixels[sourceIndex + 1]
-          outputPixels[outputIndex + 2] = sourcePixels[sourceIndex + 2]
-          outputPixels[outputIndex + 3] = sourcePixels[sourceIndex + 3]
         }
+
+        sampleCtx.putImageData(outputImage, 0, 0)
+        renderedPolarRemap = true
+      } catch {
+        renderedPolarRemap = false
       }
 
-      sampleCtx.putImageData(outputImage, 0, 0)
-
       ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = Math.max(0.28, 1 - blendAmount * 0.35)
+      ctx.globalAlpha = Math.max(0.24, 1 - blendAmount * 0.45)
       ctx.drawImage(sourceCanvas, 0, 0, width, height)
-      ctx.globalAlpha = 0.18 + blendAmount * 0.82
-      ctx.drawImage(sampleCanvas, 0, 0, width, height)
+
+      if (renderedPolarRemap) {
+        ctx.globalAlpha = 0.2 + blendAmount * 0.8
+        ctx.drawImage(sampleCanvas, 0, 0, width, height)
+      } else {
+        const radius = Math.hypot(width, height) * 1.06
+        const step = (Math.PI * 2) / segments
+        for (let i = 0; i < segments; i += 1) {
+          ctx.save()
+          ctx.translate(cx, cy)
+          ctx.rotate(i * step)
+          ctx.beginPath()
+          ctx.moveTo(0, 0)
+          ctx.lineTo(Math.cos(-step * 0.5) * radius, Math.sin(-step * 0.5) * radius)
+          ctx.lineTo(Math.cos(step * 0.5) * radius, Math.sin(step * 0.5) * radius)
+          ctx.closePath()
+          ctx.clip()
+
+          if (i % 2 === 1) {
+            ctx.scale(-1, 1)
+          }
+
+          const twist = step * (0.24 + safeIntensity * 0.9)
+          const offsetX = width * (0.1 + safeIntensity * 0.16)
+          const offsetY = height * (safeOffsetPct * 0.5 + safeIntensity * 0.06)
+          ctx.rotate(sampleRotate + (i % 2 === 0 ? twist : -twist))
+          ctx.scale(safeZoom * (1.04 + safeIntensity * 0.26), safeZoom * (1.04 + safeIntensity * 0.26))
+          ctx.translate(i % 2 === 0 ? offsetX : -offsetX, -offsetY)
+          ctx.globalAlpha = Math.min(1, 0.26 + blendAmount * 0.74)
+          ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
+          ctx.restore()
+        }
+      }
 
       frameId = requestAnimationFrame(draw)
     }
