@@ -1266,10 +1266,10 @@ export default function OutputPreview({
   )
   const kaleidoBaseSegments = Number.isFinite(masterFx?.kaleidoSegments)
     ? Math.round(masterFx.kaleidoSegments)
-    : 6
+    : 8
   const kaleidoSegments = Math.max(
-    3,
-    Math.min(18, kaleidoBaseSegments + Math.round(kaleidoBandLevel * kaleidoAudioAmount * kaleidoBaseAmount * 8)),
+    6,
+    Math.min(14, kaleidoBaseSegments + Math.round(kaleidoBandLevel * kaleidoAudioAmount * kaleidoBaseAmount * 5)),
   )
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * 90 + kaleidoBandLevel * kaleidoAudioAmount * 150
@@ -1277,6 +1277,9 @@ export default function OutputPreview({
   const kaleidoSlices = useMemo(() => buildKaleidoSlicePolygons(kaleidoSegments), [kaleidoSegments])
   const kaleidoActive = kaleidoIntensity > 0.01
   const baseLayerOpacity = kaleidoActive ? 0 : 1
+  const kaleidoZoom = 1.14 + kaleidoIntensity * 0.28 + kaleidoBandLevel * kaleidoAudioAmount * 0.2
+  const kaleidoOffset = 8 + kaleidoIntensity * 22 + kaleidoBandLevel * 8
+  const kaleidoCoreSize = 10 + (1 - kaleidoIntensity) * 10
 
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
@@ -1394,8 +1397,11 @@ export default function OutputPreview({
           <div
             className="kaleido-stage"
             style={{
-              opacity: (0.2 + kaleidoIntensity * 0.8).toFixed(3),
+              opacity: (0.28 + kaleidoIntensity * 0.72).toFixed(3),
               '--kaleido-stage-rotate': `${kaleidoAngleDeg.toFixed(2)}deg`,
+              '--kaleido-zoom': kaleidoZoom.toFixed(3),
+              '--kaleido-offset': `${kaleidoOffset.toFixed(2)}%`,
+              '--kaleido-core-size': `${kaleidoCoreSize.toFixed(2)}%`,
             }}
           >
             {kaleidoSlices.map((sliceClip, sliceIndex) => (
@@ -1405,8 +1411,8 @@ export default function OutputPreview({
                 style={{
                   clipPath: sliceClip,
                   transform: `rotate(${((360 / kaleidoSlices.length) * sliceIndex).toFixed(2)}deg)`,
-                  '--kaleido-slice-rotate': `${(kaleidoAngleDeg + (360 / kaleidoSlices.length) * sliceIndex).toFixed(2)}deg`,
-                  '--kaleido-slice-scale': `${(1.02 + kaleidoIntensity * 0.2).toFixed(3)}`,
+                  '--kaleido-slice-rotate': `${(kaleidoAngleDeg + (360 / kaleidoSlices.length) * sliceIndex * 0.5).toFixed(2)}deg`,
+                  '--kaleido-slice-scale': `${(1.03 + kaleidoIntensity * 0.16).toFixed(3)}`,
                 }}
               >
                 <div className="kaleido-slice__content">
@@ -1439,6 +1445,7 @@ export default function OutputPreview({
                 </div>
               </div>
             ))}
+            <div className="kaleido-core-mask" />
           </div>
         )}
 
