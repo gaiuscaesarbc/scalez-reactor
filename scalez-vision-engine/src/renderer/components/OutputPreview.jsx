@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { blendModeToCss } from '../utils/blendModes'
 import AudioMeter from './AudioMeter'
 
