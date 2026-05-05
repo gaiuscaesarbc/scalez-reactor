@@ -1197,6 +1197,24 @@ export default function OutputPreview({
     0,
   )
 
+  const kaleidoBaseAmount = clamp01(masterFx?.kaleido ?? 0)
+  const kaleidoAudioAmount = clamp01(masterFx?.kaleidoAudio ?? 0)
+  const kaleidoSource = masterFx?.kaleidoSource || 'mid'
+  const kaleidoBandLevel = clamp01(getSpectrumSourceLevel(spectrumLevels, kaleidoSource, bassLevel))
+  const kaleidoIntensity = clamp01(
+    kaleidoBaseAmount + kaleidoBandLevel * kaleidoAudioAmount * (1 - kaleidoBaseAmount),
+  )
+  const kaleidoBaseSegments = Number.isFinite(masterFx?.kaleidoSegments)
+    ? Math.round(masterFx.kaleidoSegments)
+    : 6
+  const kaleidoSegments = Math.max(
+    3,
+    Math.min(18, kaleidoBaseSegments + Math.round(kaleidoBandLevel * kaleidoAudioAmount * 8)),
+  )
+  const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
+  const kaleidoSpinDegPerSec = kaleidoSpinBase * 90 + kaleidoBandLevel * kaleidoAudioAmount * 150
+  const kaleidoAngleDeg = ((Date.now() * 0.001 * kaleidoSpinDegPerSec) % 360 + 360) % 360
+
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
     const energyGlowBoost = energySystemEnabled ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
@@ -1222,6 +1240,20 @@ export default function OutputPreview({
         }}
       >
         <div className="preview-backdrop" />
+
+        {kaleidoIntensity > 0.01 && (
+          <div
+            className="fx-kaleido-layer"
+            style={{
+              '--kaleido-angle': `${kaleidoAngleDeg.toFixed(2)}deg`,
+              '--kaleido-step': `${(360 / kaleidoSegments).toFixed(2)}deg`,
+              '--kaleido-opacity': (kaleidoIntensity * 0.88).toFixed(3),
+              '--kaleido-line-a': (0.12 + kaleidoIntensity * 0.42).toFixed(3),
+              '--kaleido-line-b': (0.08 + kaleidoIntensity * 0.36).toFixed(3),
+              '--kaleido-pulse': (0.18 + kaleidoBandLevel * 0.82).toFixed(3),
+            }}
+          />
+        )}
 
         {layers.map((layer) => {
           const active =

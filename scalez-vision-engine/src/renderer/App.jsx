@@ -684,7 +684,12 @@ function ControlShell() {
     if (settings.layerAudioLinks != null) setLayerAudioLinks(settings.layerAudioLinks)
     if (settings.layerVideoMotion != null) setLayerVideoMotion(settings.layerVideoMotion)
     if (settings.clipVideoMotion != null) setClipVideoMotion(settings.clipVideoMotion)
-    if (settings.masterFx != null) setMasterFx(settings.masterFx)
+    if (settings.masterFx != null) {
+      setMasterFx({
+        ...DEFAULT_MASTER_FX,
+        ...settings.masterFx,
+      })
+    }
     // Load new settings if available
     if (settings.performanceModeEnabled != null)
       performanceMode.setPerformanceModeEnabled(settings.performanceModeEnabled)

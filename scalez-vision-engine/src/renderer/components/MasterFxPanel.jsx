@@ -248,6 +248,69 @@ export default memo(function MasterFxPanel({
               </label>
             ))}
           </div>
+
+          <div className="audio-link-card">
+            <div className="audio-link-card__title">Kaleidoscope</div>
+            <label className="audio-setting">
+              <span>
+                Amount: <strong>{(masterFx.kaleido ?? 0).toFixed(2)}</strong>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={masterFx.kaleido ?? 0}
+                onChange={(event) => onFxChange('kaleido', Number(event.target.value))}
+              />
+            </label>
+            <label className="audio-setting">
+              <span>
+                Segments: <strong>{Math.round(masterFx.kaleidoSegments ?? 6)}</strong>
+              </span>
+              <input
+                type="range"
+                min="3"
+                max="18"
+                step="1"
+                value={masterFx.kaleidoSegments ?? 6}
+                onChange={(event) => onFxChange('kaleidoSegments', Number(event.target.value))}
+              />
+            </label>
+            <label className="audio-setting">
+              <span>
+                Spin: <strong>{(masterFx.kaleidoSpin ?? 0).toFixed(2)}</strong>
+              </span>
+              <input
+                type="range"
+                min="-1"
+                max="1"
+                step="0.01"
+                value={masterFx.kaleidoSpin ?? 0}
+                onChange={(event) => onFxChange('kaleidoSpin', Number(event.target.value))}
+              />
+            </label>
+            <label className="audio-setting">
+              <span>
+                Audio Morph: <strong>{(masterFx.kaleidoAudio ?? 0).toFixed(2)}</strong>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={masterFx.kaleidoAudio ?? 0}
+                onChange={(event) => onFxChange('kaleidoAudio', Number(event.target.value))}
+              />
+            </label>
+            <BandPicker
+              label="Kaleido Band"
+              value={masterFx.kaleidoSource || 'mid'}
+              onChange={(band) => onFxChange('kaleidoSource', band)}
+              spectrumRef={audioPanel?.spectrumRef}
+            />
+          </div>
+
           {energySystemEnabled && (
             <EnergyDashboard
               energyState={energyState}

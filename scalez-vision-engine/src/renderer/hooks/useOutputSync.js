@@ -5,6 +5,11 @@ export const DEFAULT_MASTER_FX = {
   strobe: 0,
   shake: 0,
   brightness: 1,
+  kaleido: 0,
+  kaleidoSegments: 6,
+  kaleidoSpin: 0,
+  kaleidoAudio: 0.5,
+  kaleidoSource: 'mid',
 }
 
 export function buildOutputState({
