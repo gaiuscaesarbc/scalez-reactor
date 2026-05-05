@@ -1282,8 +1282,8 @@ export default function OutputPreview({
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // The canvas now renders both the plain composite and kaleido composite, so keep DOM video nearly hidden.
-  const baseLayerOpacity = kaleidoActive ? 0.04 : 1
+  // Let the canvas own the kaleido image while keeping a tiny DOM fallback underneath.
+  const baseLayerOpacity = kaleidoActive ? 0.08 : 1
   const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
   const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
@@ -1351,7 +1351,7 @@ export default function OutputPreview({
 
       const cx = width * 0.5
       const cy = height * 0.5
-      const radius = Math.hypot(width, height)
+      const radius = Math.hypot(width, height) * 1.08
       const safeIntensity = clamp01(params.intensity)
       const blendAmount = smoothstep01(safeIntensity)
       const safeSegments = Number.isFinite(params.segments) ? params.segments : 8
@@ -1360,7 +1360,7 @@ export default function OutputPreview({
       const now = performance.now() * 0.001
       const safeSpin = Number.isFinite(params.spinDegPerSec) ? Math.max(-720, Math.min(720, params.spinDegPerSec)) : 0
       const sampleRotate = (now * safeSpin * Math.PI) / 180
-      const safeZoom = Number.isFinite(params.zoom) ? Math.max(1.01, Math.min(2.1, params.zoom)) : 1.14
+      const safeZoom = Number.isFinite(params.zoom) ? Math.max(1.02, Math.min(2.4, params.zoom)) : 1.18
       const safeOffsetPct = Number.isFinite(params.offsetPct) ? Math.max(0.005, Math.min(0.22, params.offsetPct)) : 0.08
       let drewAnyVideo = false
 
@@ -1413,30 +1413,20 @@ export default function OutputPreview({
           ctx.scale(-1, 1)
         }
 
-        const twist = step * 0.48 * safeIntensity
+        const twist = step * (0.1 + safeIntensity * 0.72)
+        const sliceScale = 1.04 + safeIntensity * 0.52
+        const sliceOffsetX = width * (0.12 + safeIntensity * 0.22)
+        const sliceOffsetY = height * safeOffsetPct * 0.9
         ctx.rotate(sampleRotate + (i % 2 === 0 ? twist : -twist))
-        const sliceScale = 1.01 + safeIntensity * 0.34
         ctx.scale(safeZoom * sliceScale, safeZoom * sliceScale)
-        ctx.translate(0, -height * safeOffsetPct)
+        ctx.translate(i % 2 === 0 ? sliceOffsetX : -sliceOffsetX, -sliceOffsetY)
 
-        ctx.globalAlpha = 0.4 + blendAmount * 0.6
+        ctx.globalAlpha = Math.min(1, 0.22 + blendAmount * 0.98)
         ctx.globalCompositeOperation = 'source-over'
         ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
 
         ctx.restore()
       }
-
-      const core = Math.max(4, (params.coreSizePct / 100) * Math.min(width, height))
-      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, core * 2.1)
-      grad.addColorStop(0, 'rgba(0,0,0,0.18)')
-      grad.addColorStop(0.45, 'rgba(0,0,0,0.08)')
-      grad.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = 1
-      ctx.fillStyle = grad
-      ctx.beginPath()
-      ctx.arc(cx, cy, core * 2.8, 0, Math.PI * 2)
-      ctx.fill()
 
       frameId = requestAnimationFrame(draw)
     }
