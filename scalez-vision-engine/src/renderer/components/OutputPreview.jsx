@@ -1277,8 +1277,8 @@ export default function OutputPreview({
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // Keep a faint base frame under the canvas as a safety net while the effect is active.
-  const baseLayerOpacity = kaleidoActive ? Math.max(0.16, 1 - kaleidoIntensity * 0.9) : 1
+  // Keep the base video at full brightness; kaleido should add on top, not dim the source.
+  const baseLayerOpacity = 1
   const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
   const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
@@ -1452,12 +1452,9 @@ export default function OutputPreview({
         renderedPolarRemap = false
       }
 
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = Math.max(0.12, 1 - blendAmount * 0.82)
-      ctx.drawImage(sourceCanvas, 0, 0, width, height)
-
       if (renderedPolarRemap) {
-        ctx.globalAlpha = Math.min(1, 0.58 + blendAmount * 0.42)
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.globalAlpha = Math.min(1, 0.38 + blendAmount * 0.62)
         ctx.drawImage(sampleCanvas, 0, 0, width, height)
       } else {
         const radius = Math.hypot(width, height) * 1.06
@@ -1483,7 +1480,7 @@ export default function OutputPreview({
           ctx.rotate(sampleRotate + (i % 2 === 0 ? twist : -twist))
           ctx.scale(safeZoom * (1.04 + safeIntensity * 0.26), safeZoom * (1.04 + safeIntensity * 0.26))
           ctx.translate(i % 2 === 0 ? offsetX : -offsetX, -offsetY)
-          ctx.globalAlpha = Math.min(1, 0.54 + blendAmount * 0.46)
+          ctx.globalAlpha = Math.min(1, 0.42 + blendAmount * 0.58)
           ctx.globalCompositeOperation = i % 2 === 0 ? 'source-over' : 'screen'
           ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
           ctx.restore()
