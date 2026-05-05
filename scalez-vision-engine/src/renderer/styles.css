@@ -166,7 +166,7 @@ body.output-window #root {
 
 .kaleido-slice__content {
   position: absolute;
-  inset: 0;
+  inset: -12%;
   transform:
     rotate(var(--kaleido-slice-rotate, 0deg))
     translateY(calc(-1 * var(--kaleido-offset, 12%)))

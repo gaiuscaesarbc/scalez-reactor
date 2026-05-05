@@ -174,7 +174,7 @@ function setSafePlaybackRate(video, rate) {
 function buildKaleidoSlicePolygons(segmentCount) {
   const count = Math.max(3, Math.min(12, Math.round(segmentCount || 6)))
   const step = 360 / count
-  const radius = 92
+  const radius = 120
   return Array.from({ length: count }, (_, index) => {
     const start = -90 + index * step
     const end = start + step
@@ -1411,7 +1411,7 @@ export default function OutputPreview({
                 style={{
                   clipPath: sliceClip,
                   transform: `rotate(${((360 / kaleidoSlices.length) * sliceIndex).toFixed(2)}deg)`,
-                  '--kaleido-slice-rotate': `${(kaleidoAngleDeg + (360 / kaleidoSlices.length) * sliceIndex * 0.5).toFixed(2)}deg`,
+                  '--kaleido-slice-rotate': `${kaleidoAngleDeg.toFixed(2)}deg`,
                   '--kaleido-slice-scale': `${(1.03 + kaleidoIntensity * 0.16).toFixed(3)}`,
                 }}
               >
