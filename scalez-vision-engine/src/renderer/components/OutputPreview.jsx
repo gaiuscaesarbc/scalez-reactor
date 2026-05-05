@@ -362,12 +362,6 @@ export default function OutputPreview({
   }, [layers, bassLevel, spectrumLevels])
 
   useEffect(() => {
-    if (kaleidoExclusive) {
-      setStrobeFlash((current) => (current.opacity > 0 ? { ...current, opacity: 0 } : current))
-      lastStrobeLevelRef.current = 0
-      return undefined
-    }
-
     const nextLevel = blackout ? 0 : Math.min(0.52, Math.pow(masterFx.strobe, 1.35) * 0.58)
     const prevLevel = lastStrobeLevelRef.current
     const activationThreshold = 0.02
@@ -399,10 +393,10 @@ export default function OutputPreview({
         manualStrobeTimeoutRef.current = null
       }
     }
-  }, [masterFx.strobe, blackout, kaleidoExclusive])
+  }, [masterFx.strobe, blackout])
 
   useEffect(() => {
-    if (kaleidoExclusive || !energySystemEnabled || blackout || energyStrobeCount === 0) {
+    if (!energySystemEnabled || blackout || energyStrobeCount === 0) {
       return
     }
 
@@ -426,10 +420,10 @@ export default function OutputPreview({
         energyStrobeTimeoutRef.current = null
       }
     }
-  }, [energyStrobeCount, blackout, energySystemEnabled, kaleidoExclusive])
+  }, [energyStrobeCount, blackout, energySystemEnabled])
 
   useEffect(() => {
-    if (kaleidoExclusive || blackout || dropStrobeCount === 0) {
+    if (blackout || dropStrobeCount === 0) {
       return
     }
 
@@ -453,7 +447,7 @@ export default function OutputPreview({
         dropStrobeTimeoutRef.current = null
       }
     }
-  }, [dropStrobeCount, blackout, kaleidoExclusive])
+  }, [dropStrobeCount, blackout])
 
   useEffect(() => {
     const previewEl = previewRef.current
@@ -1284,7 +1278,7 @@ export default function OutputPreview({
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
   // Keep a faint base frame under the canvas as a safety net while the effect is active.
-  const baseLayerOpacity = kaleidoActive ? Math.max(0.2, 1 - kaleidoIntensity * 0.8) : 1
+  const baseLayerOpacity = kaleidoActive ? Math.max(0.16, 1 - kaleidoIntensity * 0.9) : 1
   const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
   const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
@@ -1417,12 +1411,12 @@ export default function OutputPreview({
         const outputPixels = outputImage.data
         const procCx = processWidth * 0.5
         const procCy = processHeight * 0.5
-        const sourceCx = procCx + Math.cos(sampleRotate * 0.7) * processWidth * safeIntensity * 0.08
-        const sourceCy = procCy - processHeight * safeOffsetPct * 0.28 + Math.sin(sampleRotate * 0.45) * processHeight * safeIntensity * 0.04
+        const sourceCx = procCx + Math.cos(sampleRotate * 0.7) * processWidth * (0.04 + safeIntensity * 0.18)
+        const sourceCy = procCy - processHeight * (safeOffsetPct * 0.18 + safeIntensity * 0.1) + Math.sin(sampleRotate * 0.45) * processHeight * safeIntensity * 0.06
         const segmentAngle = (Math.PI * 2) / segments
         const maxRadius = Math.hypot(procCx, procCy)
-        const twistStrength = 0.3 + safeIntensity * 2.4
-        const radialZoom = safeZoom * (1 + safeIntensity * 0.45)
+        const twistStrength = 0.8 + safeIntensity * 4.2
+        const radialZoom = safeZoom * (1.08 + safeIntensity * 0.92)
 
         for (let y = 0; y < processHeight; y += 1) {
           const dy = y - procCy
@@ -1459,11 +1453,11 @@ export default function OutputPreview({
       }
 
       ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = Math.max(0.24, 1 - blendAmount * 0.45)
+      ctx.globalAlpha = Math.max(0.12, 1 - blendAmount * 0.82)
       ctx.drawImage(sourceCanvas, 0, 0, width, height)
 
       if (renderedPolarRemap) {
-        ctx.globalAlpha = 0.2 + blendAmount * 0.8
+        ctx.globalAlpha = Math.min(1, 0.58 + blendAmount * 0.42)
         ctx.drawImage(sampleCanvas, 0, 0, width, height)
       } else {
         const radius = Math.hypot(width, height) * 1.06
@@ -1489,7 +1483,8 @@ export default function OutputPreview({
           ctx.rotate(sampleRotate + (i % 2 === 0 ? twist : -twist))
           ctx.scale(safeZoom * (1.04 + safeIntensity * 0.26), safeZoom * (1.04 + safeIntensity * 0.26))
           ctx.translate(i % 2 === 0 ? offsetX : -offsetX, -offsetY)
-          ctx.globalAlpha = Math.min(1, 0.26 + blendAmount * 0.74)
+          ctx.globalAlpha = Math.min(1, 0.54 + blendAmount * 0.46)
+          ctx.globalCompositeOperation = i % 2 === 0 ? 'source-over' : 'screen'
           ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
           ctx.restore()
         }
@@ -1510,16 +1505,14 @@ export default function OutputPreview({
 
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
-    const energyGlowBoost = energySystemEnabled && !kaleidoExclusive ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
-    const dropGlowBoost = kaleidoExclusive ? 0 : (smoothedDropFx?.glowBoost ?? 0)
-    const glowStrength = kaleidoExclusive ? 0 : Math.min(1.5, masterFx.glow + energyGlowBoost + dropGlowBoost)
-    const energyBrightnessBoost = energySystemEnabled && !kaleidoExclusive ? (smoothedEnergyFx?.brightnessBoost ?? 0) : 0
-    const dropBrightnessBoost = kaleidoExclusive ? 0 : (smoothedDropFx?.brightnessBoost ?? 0)
-    const finalBrightness = kaleidoExclusive
-      ? 1
-      : Math.max(0.5, Math.min(1.5, masterFx.brightness + energyBrightnessBoost + dropBrightnessBoost))
+    const energyGlowBoost = energySystemEnabled ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
+    const dropGlowBoost = smoothedDropFx?.glowBoost ?? 0
+    const glowStrength = Math.min(1.5, masterFx.glow + energyGlowBoost + dropGlowBoost)
+    const energyBrightnessBoost = energySystemEnabled ? (smoothedEnergyFx?.brightnessBoost ?? 0) : 0
+    const dropBrightnessBoost = smoothedDropFx?.brightnessBoost ?? 0
+    const finalBrightness = Math.max(0.5, Math.min(1.5, masterFx.brightness + energyBrightnessBoost + dropBrightnessBoost))
 
-    const strobeActive = !kaleidoExclusive && strobeFlash.opacity > 0.01
+    const strobeActive = strobeFlash.opacity > 0.01
 
   return (
     <section className="output-preview-wrap">
