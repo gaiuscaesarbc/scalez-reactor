@@ -303,6 +303,7 @@ export default function OutputPreview({
   const latestSpectrumRef = useRef(spectrumLevels)
   const [syncStatus, setSyncStatus] = useState('synced')
   const [videoErrors, setVideoErrors] = useState({})
+  const kaleidoExclusive = clamp01(masterFx?.kaleido ?? 0) > 0.01
 
   const syncKaleidoClonePlayback = (layerIndex, sourceVideo) => {
     if (!sourceVideo) {
@@ -385,6 +386,12 @@ export default function OutputPreview({
   }, [layers, bassLevel, spectrumLevels])
 
   useEffect(() => {
+    if (kaleidoExclusive) {
+      setStrobeFlash((current) => (current.opacity > 0 ? { ...current, opacity: 0 } : current))
+      lastStrobeLevelRef.current = 0
+      return undefined
+    }
+
     const nextLevel = blackout ? 0 : Math.min(0.52, Math.pow(masterFx.strobe, 1.35) * 0.58)
     const prevLevel = lastStrobeLevelRef.current
     const activationThreshold = 0.02
@@ -416,10 +423,10 @@ export default function OutputPreview({
         manualStrobeTimeoutRef.current = null
       }
     }
-  }, [masterFx.strobe, blackout])
+  }, [masterFx.strobe, blackout, kaleidoExclusive])
 
   useEffect(() => {
-    if (!energySystemEnabled || blackout || energyStrobeCount === 0) {
+    if (kaleidoExclusive || !energySystemEnabled || blackout || energyStrobeCount === 0) {
       return
     }
 
@@ -443,10 +450,10 @@ export default function OutputPreview({
         energyStrobeTimeoutRef.current = null
       }
     }
-  }, [energyStrobeCount, blackout, energySystemEnabled])
+  }, [energyStrobeCount, blackout, energySystemEnabled, kaleidoExclusive])
 
   useEffect(() => {
-    if (blackout || dropStrobeCount === 0) {
+    if (kaleidoExclusive || blackout || dropStrobeCount === 0) {
       return
     }
 
@@ -470,7 +477,7 @@ export default function OutputPreview({
         dropStrobeTimeoutRef.current = null
       }
     }
-  }, [dropStrobeCount, blackout])
+  }, [dropStrobeCount, blackout, kaleidoExclusive])
 
   useEffect(() => {
     const previewEl = previewRef.current
@@ -482,7 +489,9 @@ export default function OutputPreview({
     // PART 3: Merge energy shake with manual shake
     const energyShakeBoost = energySystemEnabled ? (smoothedEnergyFx?.shakeIntensity ?? 0) : 0
     const dropShakeBoost = smoothedDropFx?.shakeIntensity ?? 0
-    const shakeAmount = Math.max(0, Math.min(1.0, Number(masterFx?.shake ?? 0) + energyShakeBoost + dropShakeBoost))
+    const shakeAmount = kaleidoExclusive
+      ? 0
+      : Math.max(0, Math.min(1.0, Number(masterFx?.shake ?? 0) + energyShakeBoost + dropShakeBoost))
 
     if (shakeAmount <= 0.08) {
       previewEl.style.setProperty('--shake-x', '0px')
@@ -508,7 +517,7 @@ export default function OutputPreview({
       previewEl.style.setProperty('--shake-x', '0px')
       previewEl.style.setProperty('--shake-y', '0px')
     }
-  }, [masterFx?.shake, smoothedEnergyFx?.shakeIntensity, smoothedDropFx?.shakeIntensity])
+  }, [masterFx?.shake, smoothedEnergyFx?.shakeIntensity, smoothedDropFx?.shakeIntensity, kaleidoExclusive])
 
   // Apply per-layer timeline range and audio-reactive playback motion.
   useEffect(() => {
@@ -1307,14 +1316,16 @@ export default function OutputPreview({
 
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
-    const energyGlowBoost = energySystemEnabled ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
-    const dropGlowBoost = smoothedDropFx?.glowBoost ?? 0
-    const glowStrength = Math.min(1.5, masterFx.glow + energyGlowBoost + dropGlowBoost)
-    const energyBrightnessBoost = energySystemEnabled ? (smoothedEnergyFx?.brightnessBoost ?? 0) : 0
-    const dropBrightnessBoost = smoothedDropFx?.brightnessBoost ?? 0
-    const finalBrightness = Math.max(0.5, Math.min(1.5, masterFx.brightness + energyBrightnessBoost + dropBrightnessBoost))
+    const energyGlowBoost = energySystemEnabled && !kaleidoExclusive ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
+    const dropGlowBoost = kaleidoExclusive ? 0 : (smoothedDropFx?.glowBoost ?? 0)
+    const glowStrength = kaleidoExclusive ? 0 : Math.min(1.5, masterFx.glow + energyGlowBoost + dropGlowBoost)
+    const energyBrightnessBoost = energySystemEnabled && !kaleidoExclusive ? (smoothedEnergyFx?.brightnessBoost ?? 0) : 0
+    const dropBrightnessBoost = kaleidoExclusive ? 0 : (smoothedDropFx?.brightnessBoost ?? 0)
+    const finalBrightness = kaleidoExclusive
+      ? 1
+      : Math.max(0.5, Math.min(1.5, masterFx.brightness + energyBrightnessBoost + dropBrightnessBoost))
 
-  const strobeActive = strobeFlash.opacity > 0.01
+    const strobeActive = !kaleidoExclusive && strobeFlash.opacity > 0.01
 
   return (
     <section className="output-preview-wrap">
