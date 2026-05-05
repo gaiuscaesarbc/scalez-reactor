@@ -1275,16 +1275,16 @@ export default function OutputPreview({
     ? Math.round(masterFx.kaleidoSegments)
     : 8
   const kaleidoSegments = Math.max(
-    6,
-    Math.min(14, kaleidoBaseSegments + Math.round(kaleidoIntensity * 6 + kaleidoBandLevel * kaleidoAudioAmount * 3)),
+    3,
+    Math.min(18, kaleidoBaseSegments + Math.round(kaleidoIntensity * 8 + kaleidoBandLevel * kaleidoAudioAmount * 4)),
   )
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // Crossfade base video by intensity so amount visually morphs instead of only darkening.
-  const baseLayerOpacity = kaleidoActive ? Math.max(0.42, 1 - kaleidoIntensity * 0.58) : 1
-  const kaleidoZoom = 1.03 + kaleidoIntensity * 0.62 + kaleidoBandLevel * kaleidoAudioAmount * 0.16
-  const kaleidoOffset = 2 + kaleidoIntensity * 10 + kaleidoBandLevel * kaleidoAudioAmount * 4
+  // Let amount push decisively from raw video toward a full kaleido render.
+  const baseLayerOpacity = kaleidoActive ? Math.max(0.08, 1 - Math.pow(kaleidoIntensity, 0.82) * 1.02) : 1
+  const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
+  const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
 
   kaleidoParamsRef.current = {
@@ -1340,13 +1340,13 @@ export default function OutputPreview({
       const radius = Math.hypot(width, height)
       const safeIntensity = clamp01(params.intensity)
       const safeSegments = Number.isFinite(params.segments) ? params.segments : 8
-      const segments = Math.max(6, Math.min(14, Math.round(safeSegments)))
+      const segments = Math.max(3, Math.min(18, Math.round(safeSegments)))
       const step = (Math.PI * 2) / segments
       const now = performance.now() * 0.001
       const safeSpin = Number.isFinite(params.spinDegPerSec) ? Math.max(-720, Math.min(720, params.spinDegPerSec)) : 0
       const sampleRotate = (now * safeSpin * Math.PI) / 180
-      const safeZoom = Number.isFinite(params.zoom) ? Math.max(1.02, Math.min(1.55, params.zoom)) : 1.12
-      const safeOffsetPct = Number.isFinite(params.offsetPct) ? Math.max(0.01, Math.min(0.14, params.offsetPct)) : 0.08
+      const safeZoom = Number.isFinite(params.zoom) ? Math.max(1.01, Math.min(2.1, params.zoom)) : 1.14
+      const safeOffsetPct = Number.isFinite(params.offsetPct) ? Math.max(0.005, Math.min(0.22, params.offsetPct)) : 0.08
       let drewAnyVideo = false
 
       for (let i = 0; i < segments; i += 1) {
@@ -1365,8 +1365,9 @@ export default function OutputPreview({
           ctx.scale(-1, 1)
         }
 
-        ctx.rotate(sampleRotate)
-        const sliceScale = 1.03 + safeIntensity * 0.16
+        const twist = step * 0.48 * safeIntensity
+        ctx.rotate(sampleRotate + (i % 2 === 0 ? twist : -twist))
+        const sliceScale = 1.01 + safeIntensity * 0.34
         ctx.scale(safeZoom * sliceScale, safeZoom * sliceScale)
         ctx.translate(0, -height * safeOffsetPct)
 
@@ -1542,7 +1543,7 @@ export default function OutputPreview({
           <canvas
             ref={kaleidoCanvasRef}
             className="kaleido-canvas"
-            style={{ opacity: (0.22 + kaleidoIntensity * 0.74).toFixed(3) }}
+            style={{ opacity: (0.38 + kaleidoIntensity * 0.62).toFixed(3) }}
           />
         )}
 
