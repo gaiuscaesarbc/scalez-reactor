@@ -1282,8 +1282,8 @@ export default function OutputPreview({
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // Let the canvas own the kaleido image while keeping a tiny DOM fallback underneath.
-  const baseLayerOpacity = kaleidoActive ? 0.08 : 1
+  // The canvas now carries the full source composite when kaleido is active.
+  const baseLayerOpacity = kaleidoActive ? 0 : 1
   const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
   const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
@@ -1394,7 +1394,7 @@ export default function OutputPreview({
       }
 
       ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = Math.max(0, 1 - blendAmount)
+      ctx.globalAlpha = 1
       ctx.drawImage(sourceCanvas, 0, 0, width, height)
 
       for (let i = 0; i < segments; i += 1) {
@@ -1421,8 +1421,8 @@ export default function OutputPreview({
         ctx.scale(safeZoom * sliceScale, safeZoom * sliceScale)
         ctx.translate(i % 2 === 0 ? sliceOffsetX : -sliceOffsetX, -sliceOffsetY)
 
-        ctx.globalAlpha = Math.min(1, 0.22 + blendAmount * 0.98)
-        ctx.globalCompositeOperation = 'source-over'
+        ctx.globalAlpha = Math.min(1, 0.18 + blendAmount * 0.92)
+        ctx.globalCompositeOperation = i % 2 === 0 ? 'screen' : 'lighter'
         ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
 
         ctx.restore()
