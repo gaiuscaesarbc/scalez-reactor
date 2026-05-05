@@ -148,61 +148,13 @@ body.output-window #root {
   object-fit: cover;
 }
 
-.kaleido-stage {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  mix-blend-mode: normal;
-  filter: saturate(1.12) contrast(1.08);
-}
-
-.kaleido-slice {
-  position: absolute;
-  inset: -26%;
-  transform-origin: 50% 50%;
-  will-change: transform;
-}
-
-.kaleido-slice__content {
-  position: absolute;
-  inset: -12%;
-  transform:
-    rotate(var(--kaleido-slice-rotate, 0deg))
-    translateY(calc(-1 * var(--kaleido-offset, 12%)))
-    scale(calc(var(--kaleido-zoom, 1.18) * var(--kaleido-slice-scale, 1.08)));
-  transform-origin: 50% 50%;
-  will-change: transform;
-}
-
-.kaleido-slice.is-mirror .kaleido-slice__content {
-  transform:
-    rotate(var(--kaleido-slice-rotate, 0deg))
-    translateY(calc(-1 * var(--kaleido-offset, 12%)))
-    scale(calc(var(--kaleido-zoom, 1.18) * var(--kaleido-slice-scale, 1.08)))
-    scaleX(-1);
-}
-
-.kaleido-video {
+.kaleido-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-}
-
-.kaleido-core-mask {
-  position: absolute;
-  inset: 0;
   pointer-events: none;
-  background:
-    radial-gradient(
-      circle at 50% 50%,
-      rgba(0, 0, 0, 0.95) 0 var(--kaleido-core-size, 16%),
-      rgba(0, 0, 0, 0.68) calc(var(--kaleido-core-size, 16%) + 8%),
-      rgba(0, 0, 0, 0.16) calc(var(--kaleido-core-size, 16%) + 18%),
-      rgba(0, 0, 0, 0) calc(var(--kaleido-core-size, 16%) + 35%)
-    );
+  image-rendering: auto;
 }
 
 .fx-glow-layer,

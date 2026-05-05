@@ -171,19 +171,14 @@ function setSafePlaybackRate(video, rate) {
   }
 }
 
-function buildKaleidoSlicePolygons(segmentCount) {
-  const count = Math.max(3, Math.min(12, Math.round(segmentCount || 6)))
-  const step = 360 / count
-  const radius = 120
-  return Array.from({ length: count }, (_, index) => {
-    const start = -90 + index * step
-    const end = start + step
-    const x1 = 50 + Math.cos((start * Math.PI) / 180) * radius
-    const y1 = 50 + Math.sin((start * Math.PI) / 180) * radius
-    const x2 = 50 + Math.cos((end * Math.PI) / 180) * radius
-    const y2 = 50 + Math.sin((end * Math.PI) / 180) * radius
-    return `polygon(50% 50%, ${x1.toFixed(3)}% ${y1.toFixed(3)}%, ${x2.toFixed(3)}% ${y2.toFixed(3)}%)`
-  })
+function blendModeToCanvasOperation(mode) {
+  if (mode === 'add') {
+    return 'lighter'
+  }
+  if (mode === 'screen') {
+    return 'screen'
+  }
+  return 'source-over'
 }
 
 const BOUNCE_FORWARD_RETRY_LIMIT = 3
@@ -246,6 +241,7 @@ export default function OutputPreview({
   dropStrobeCount = 0,
 }) {
   const previewRef = useRef(null)
+  const kaleidoCanvasRef = useRef(null)
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
   const srcLogRef = useRef({})
@@ -300,6 +296,15 @@ export default function OutputPreview({
   const latestLayersRef = useRef(layers)
   const latestBassRef = useRef(bassLevel)
   const latestSpectrumRef = useRef(spectrumLevels)
+  const kaleidoParamsRef = useRef({
+    active: false,
+    intensity: 0,
+    segments: 8,
+    spinDegPerSec: 0,
+    zoom: 1,
+    offsetPct: 0,
+    coreSizePct: 18,
+  })
   const [syncStatus, setSyncStatus] = useState('synced')
   const [videoErrors, setVideoErrors] = useState({})
   const kaleidoExclusive = clamp01(masterFx?.kaleido ?? 0) > 0.01
@@ -1273,13 +1278,141 @@ export default function OutputPreview({
   )
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * 90 + kaleidoBandLevel * kaleidoAudioAmount * 150
-  const kaleidoAngleDeg = ((Date.now() * 0.001 * kaleidoSpinDegPerSec) % 360 + 360) % 360
-  const kaleidoSlices = useMemo(() => buildKaleidoSlicePolygons(kaleidoSegments), [kaleidoSegments])
   const kaleidoActive = kaleidoIntensity > 0.01
   const baseLayerOpacity = kaleidoActive ? 0 : 1
   const kaleidoZoom = 1.14 + kaleidoIntensity * 0.28 + kaleidoBandLevel * kaleidoAudioAmount * 0.2
   const kaleidoOffset = 8 + kaleidoIntensity * 22 + kaleidoBandLevel * 8
   const kaleidoCoreSize = 10 + (1 - kaleidoIntensity) * 10
+
+  kaleidoParamsRef.current = {
+    active: kaleidoActive,
+    intensity: kaleidoIntensity,
+    segments: kaleidoSegments,
+    spinDegPerSec: kaleidoSpinDegPerSec,
+    zoom: kaleidoZoom,
+    offsetPct: kaleidoOffset / 100,
+    coreSizePct: kaleidoCoreSize,
+  }
+
+  useEffect(() => {
+    const canvas = kaleidoCanvasRef.current
+    if (!canvas) {
+      return undefined
+    }
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      return undefined
+    }
+
+    let frameId = null
+    const draw = () => {
+      const previewEl = previewRef.current
+      const params = kaleidoParamsRef.current
+      if (!previewEl || !params.active || blackout) {
+        if (canvas.width > 0 && canvas.height > 0) {
+          ctx.setTransform(1, 0, 0, 1, 0, 0)
+          ctx.clearRect(0, 0, canvas.width, canvas.height)
+        }
+        frameId = requestAnimationFrame(draw)
+        return
+      }
+
+      const rect = previewEl.getBoundingClientRect()
+      const width = Math.max(2, Math.round(rect.width))
+      const height = Math.max(2, Math.round(rect.height))
+      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1))
+      const targetW = Math.round(width * dpr)
+      const targetH = Math.round(height * dpr)
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW
+        canvas.height = targetH
+      }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, width, height)
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, width, height)
+
+      const cx = width * 0.5
+      const cy = height * 0.5
+      const radius = Math.hypot(width, height)
+      const segments = Math.max(6, Math.min(14, Math.round(params.segments)))
+      const step = (Math.PI * 2) / segments
+      const now = performance.now() * 0.001
+      const sampleRotate = (now * params.spinDegPerSec * Math.PI) / 180
+
+      for (let i = 0; i < segments; i += 1) {
+        ctx.save()
+        ctx.translate(cx, cy)
+        ctx.rotate(i * step)
+
+        ctx.beginPath()
+        ctx.moveTo(0, 0)
+        ctx.lineTo(Math.cos(-step * 0.5) * radius, Math.sin(-step * 0.5) * radius)
+        ctx.lineTo(Math.cos(step * 0.5) * radius, Math.sin(step * 0.5) * radius)
+        ctx.closePath()
+        ctx.clip()
+
+        if (i % 2 === 1) {
+          ctx.scale(-1, 1)
+        }
+
+        ctx.rotate(sampleRotate)
+        const sliceScale = 1.03 + params.intensity * 0.16
+        ctx.scale(params.zoom * sliceScale, params.zoom * sliceScale)
+        ctx.translate(0, -height * params.offsetPct)
+
+        const currentLayers = latestLayersRef.current || []
+        currentLayers.forEach((layer) => {
+          const active =
+            typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
+          if (!layer.visible || !active?.filePath || active.status !== 'loaded') {
+            return
+          }
+          const srcVideo = videoRefsRef.current[layer.layerIndex]
+          if (!srcVideo || srcVideo.readyState < 2) {
+            return
+          }
+
+          ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity || 0))
+          ctx.globalCompositeOperation = blendModeToCanvasOperation(layer.blendMode)
+          const scale = Number.isFinite(layer.videoMotion?.scale) ? layer.videoMotion.scale : 1
+
+          ctx.save()
+          ctx.scale(scale, scale)
+          ctx.drawImage(srcVideo, -width * 0.5, -height * 0.5, width, height)
+          ctx.restore()
+        })
+
+        ctx.restore()
+      }
+
+      const core = Math.max(4, (params.coreSizePct / 100) * Math.min(width, height))
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, core * 2.6)
+      grad.addColorStop(0, 'rgba(0,0,0,0.98)')
+      grad.addColorStop(0.36, 'rgba(0,0,0,0.82)')
+      grad.addColorStop(0.72, 'rgba(0,0,0,0.2)')
+      grad.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.globalAlpha = 1
+      ctx.fillStyle = grad
+      ctx.beginPath()
+      ctx.arc(cx, cy, core * 2.8, 0, Math.PI * 2)
+      ctx.fill()
+
+      frameId = requestAnimationFrame(draw)
+    }
+
+    frameId = requestAnimationFrame(draw)
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId)
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+  }, [blackout])
 
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
@@ -1394,59 +1527,11 @@ export default function OutputPreview({
         })}
 
         {kaleidoActive && (
-          <div
-            className="kaleido-stage"
-            style={{
-              opacity: (0.28 + kaleidoIntensity * 0.72).toFixed(3),
-              '--kaleido-stage-rotate': `${kaleidoAngleDeg.toFixed(2)}deg`,
-              '--kaleido-zoom': kaleidoZoom.toFixed(3),
-              '--kaleido-offset': `${kaleidoOffset.toFixed(2)}%`,
-              '--kaleido-core-size': `${kaleidoCoreSize.toFixed(2)}%`,
-            }}
-          >
-            {kaleidoSlices.map((sliceClip, sliceIndex) => (
-              <div
-                key={`kaleido-slice-${sliceIndex}`}
-                className={`kaleido-slice ${sliceIndex % 2 === 1 ? 'is-mirror' : ''}`}
-                style={{
-                  clipPath: sliceClip,
-                  transform: `rotate(${((360 / kaleidoSlices.length) * sliceIndex).toFixed(2)}deg)`,
-                  '--kaleido-slice-rotate': `${kaleidoAngleDeg.toFixed(2)}deg`,
-                  '--kaleido-slice-scale': `${(1.03 + kaleidoIntensity * 0.16).toFixed(3)}`,
-                }}
-              >
-                <div className="kaleido-slice__content">
-                  {layers.map((layer) => {
-                    const renderInfo = getRenderableLayer(layer)
-                    const active = renderInfo.active
-                    if (!renderInfo.canRenderVideo || !active) {
-                      return null
-                    }
-                    const cloneKey = `kaleido-${layer.layerIndex}-${sliceIndex}-${renderInfo.effectivePath}`
-                    return (
-                      <video
-                        key={cloneKey}
-                        className="kaleido-video"
-                        src={renderInfo.src}
-                        autoPlay
-                        loop={!renderInfo.bounceReady}
-                        muted
-                        playsInline
-                        preload="auto"
-                        style={{
-                          opacity: layer.opacity,
-                          mixBlendMode: blendModeToCss(layer.blendMode),
-                          transform: `scale(${layer.videoMotion?.scale ?? 1})`,
-                          transformOrigin: 'center center',
-                        }}
-                      />
-                    )
-                  })}
-                </div>
-              </div>
-            ))}
-            <div className="kaleido-core-mask" />
-          </div>
+          <canvas
+            ref={kaleidoCanvasRef}
+            className="kaleido-canvas"
+            style={{ opacity: (0.28 + kaleidoIntensity * 0.72).toFixed(3) }}
+          />
         )}
 
         {activeCount === 0 && (
