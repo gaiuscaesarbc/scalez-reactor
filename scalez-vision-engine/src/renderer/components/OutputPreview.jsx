@@ -243,6 +243,7 @@ export default function OutputPreview({
   const previewRef = useRef(null)
   const kaleidoCanvasRef = useRef(null)
   const kaleidoSourceCanvasRef = useRef(null)
+  const kaleidoSampleCanvasRef = useRef(null)
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
   const srcLogRef = useRef({})
@@ -1282,8 +1283,8 @@ export default function OutputPreview({
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // Crossfade toward kaleido without ever removing the base frame completely.
-  const baseLayerOpacity = kaleidoActive ? Math.max(0.55, 1 - kaleidoIntensity * 0.45) : 1
+  // Keep a faint base frame under the canvas as a safety net while the effect is active.
+  const baseLayerOpacity = kaleidoActive ? Math.max(0.2, 1 - kaleidoIntensity * 0.8) : 1
   const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
   const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
@@ -1309,9 +1310,15 @@ export default function OutputPreview({
     }
     const sourceCanvas = kaleidoSourceCanvasRef.current
 
+    if (!kaleidoSampleCanvasRef.current) {
+      kaleidoSampleCanvasRef.current = document.createElement('canvas')
+    }
+    const sampleCanvas = kaleidoSampleCanvasRef.current
+
     const ctx = canvas.getContext('2d')
     const sourceCtx = sourceCanvas.getContext('2d')
-    if (!ctx || !sourceCtx) {
+    const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx || !sourceCtx || !sampleCtx) {
       return undefined
     }
 
@@ -1342,6 +1349,13 @@ export default function OutputPreview({
         sourceCanvas.width = width
         sourceCanvas.height = height
       }
+      const processScale = Math.min(1, 420 / width)
+      const processWidth = Math.max(120, Math.round(width * processScale))
+      const processHeight = Math.max(68, Math.round(height * processScale))
+      if (sampleCanvas.width !== processWidth || sampleCanvas.height !== processHeight) {
+        sampleCanvas.width = processWidth
+        sampleCanvas.height = processHeight
+      }
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, width, height)
@@ -1349,14 +1363,10 @@ export default function OutputPreview({
       sourceCtx.setTransform(1, 0, 0, 1, 0, 0)
       sourceCtx.clearRect(0, 0, width, height)
 
-      const cx = width * 0.5
-      const cy = height * 0.5
-      const radius = Math.hypot(width, height) * 1.08
       const safeIntensity = clamp01(params.intensity)
       const blendAmount = smoothstep01(safeIntensity)
       const safeSegments = Number.isFinite(params.segments) ? params.segments : 8
       const segments = Math.max(3, Math.min(18, Math.round(safeSegments)))
-      const step = (Math.PI * 2) / segments
       const now = performance.now() * 0.001
       const safeSpin = Number.isFinite(params.spinDegPerSec) ? Math.max(-720, Math.min(720, params.spinDegPerSec)) : 0
       const sampleRotate = (now * safeSpin * Math.PI) / 180
@@ -1393,40 +1403,58 @@ export default function OutputPreview({
         return
       }
 
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.globalAlpha = 0.18 + blendAmount * 0.24
-      ctx.drawImage(sourceCanvas, 0, 0, width, height)
+      sampleCtx.setTransform(1, 0, 0, 1, 0, 0)
+      sampleCtx.clearRect(0, 0, processWidth, processHeight)
+      sampleCtx.drawImage(sourceCanvas, 0, 0, processWidth, processHeight)
 
-      for (let i = 0; i < segments; i += 1) {
-        ctx.save()
-        ctx.translate(cx, cy)
-        ctx.rotate(i * step)
+      const sourceImage = sampleCtx.getImageData(0, 0, processWidth, processHeight)
+      const outputImage = sampleCtx.createImageData(processWidth, processHeight)
+      const sourcePixels = sourceImage.data
+      const outputPixels = outputImage.data
+      const procCx = processWidth * 0.5
+      const procCy = processHeight * 0.5
+      const sourceCx = procCx + Math.cos(sampleRotate * 0.7) * processWidth * safeIntensity * 0.08
+      const sourceCy = procCy - processHeight * safeOffsetPct * 0.28 + Math.sin(sampleRotate * 0.45) * processHeight * safeIntensity * 0.04
+      const segmentAngle = (Math.PI * 2) / segments
+      const maxRadius = Math.hypot(procCx, procCy)
+      const twistStrength = 0.3 + safeIntensity * 2.4
+      const radialZoom = safeZoom * (1 + safeIntensity * 0.45)
 
-        ctx.beginPath()
-        ctx.moveTo(0, 0)
-        ctx.lineTo(Math.cos(-step * 0.5) * radius, Math.sin(-step * 0.5) * radius)
-        ctx.lineTo(Math.cos(step * 0.5) * radius, Math.sin(step * 0.5) * radius)
-        ctx.closePath()
-        ctx.clip()
+      for (let y = 0; y < processHeight; y += 1) {
+        const dy = y - procCy
+        for (let x = 0; x < processWidth; x += 1) {
+          const dx = x - procCx
+          const radius = Math.hypot(dx, dy)
+          const radiusNorm = maxRadius > 0 ? radius / maxRadius : 0
+          let angle = Math.atan2(dy, dx) - sampleRotate * (0.55 + safeIntensity * 0.35)
+          angle = ((angle % segmentAngle) + segmentAngle) % segmentAngle
+          if (angle > segmentAngle * 0.5) {
+            angle = segmentAngle - angle
+          }
 
-        if (i % 2 === 1) {
-          ctx.scale(-1, 1)
+          const sampleAngle = angle + sampleRotate * 0.25 + radiusNorm * twistStrength
+          const sampleRadius = radius / radialZoom
+          const warpX = Math.sin(radiusNorm * 8 - sampleRotate * 0.8) * processWidth * safeIntensity * 0.025
+          const warpY = Math.cos(radiusNorm * 7 + sampleRotate * 0.6) * processHeight * safeIntensity * 0.025
+          const sampleX = Math.max(0, Math.min(processWidth - 1, Math.round(sourceCx + Math.cos(sampleAngle) * sampleRadius + warpX)))
+          const sampleY = Math.max(0, Math.min(processHeight - 1, Math.round(sourceCy + Math.sin(sampleAngle) * sampleRadius + warpY)))
+          const sourceIndex = (sampleY * processWidth + sampleX) * 4
+          const outputIndex = (y * processWidth + x) * 4
+
+          outputPixels[outputIndex] = sourcePixels[sourceIndex]
+          outputPixels[outputIndex + 1] = sourcePixels[sourceIndex + 1]
+          outputPixels[outputIndex + 2] = sourcePixels[sourceIndex + 2]
+          outputPixels[outputIndex + 3] = sourcePixels[sourceIndex + 3]
         }
-
-        const twist = step * (0.22 + safeIntensity * 0.95)
-        const sliceScale = 1.12 + safeIntensity * 0.7
-        const sliceOffsetX = width * (0.2 + safeIntensity * 0.28)
-        const sliceOffsetY = height * (safeOffsetPct * 0.65 + safeIntensity * 0.08)
-        ctx.rotate(sampleRotate + (i % 2 === 0 ? twist : -twist))
-        ctx.scale(safeZoom * sliceScale, safeZoom * sliceScale)
-        ctx.translate(i % 2 === 0 ? sliceOffsetX : -sliceOffsetX, -sliceOffsetY)
-
-        ctx.globalAlpha = Math.min(1, 0.42 + blendAmount * 0.58)
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
-
-        ctx.restore()
       }
+
+      sampleCtx.putImageData(outputImage, 0, 0)
+
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.globalAlpha = Math.max(0.28, 1 - blendAmount * 0.35)
+      ctx.drawImage(sourceCanvas, 0, 0, width, height)
+      ctx.globalAlpha = 0.18 + blendAmount * 0.82
+      ctx.drawImage(sampleCanvas, 0, 0, width, height)
 
       frameId = requestAnimationFrame(draw)
     }
@@ -1557,7 +1585,7 @@ export default function OutputPreview({
           <canvas
             ref={kaleidoCanvasRef}
             className="kaleido-canvas"
-            style={{ opacity: (0.45 + kaleidoIntensity * 0.45).toFixed(3) }}
+            style={{ opacity: '1' }}
           />
         )}
 
