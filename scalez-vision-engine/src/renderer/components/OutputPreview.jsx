@@ -172,7 +172,7 @@ function setSafePlaybackRate(video, rate) {
 }
 
 function buildKaleidoSlicePolygons(segmentCount) {
-  const count = Math.max(3, Math.min(18, Math.round(segmentCount || 6)))
+  const count = Math.max(3, Math.min(12, Math.round(segmentCount || 6)))
   const step = 360 / count
   const radius = 92
   return Array.from({ length: count }, (_, index) => {
@@ -248,7 +248,6 @@ export default function OutputPreview({
   const previewRef = useRef(null)
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
-  const kaleidoCloneRefsRef = useRef({})
   const srcLogRef = useRef({})
   const canPlayLogRef = useRef({})
   const [bounceRenderVersion, setBounceRenderVersion] = useState(0)
@@ -304,36 +303,6 @@ export default function OutputPreview({
   const [syncStatus, setSyncStatus] = useState('synced')
   const [videoErrors, setVideoErrors] = useState({})
   const kaleidoExclusive = clamp01(masterFx?.kaleido ?? 0) > 0.01
-
-  const syncKaleidoClonePlayback = (layerIndex, sourceVideo) => {
-    if (!sourceVideo) {
-      return
-    }
-    const prefix = `${layerIndex}-`
-    Object.entries(kaleidoCloneRefsRef.current).forEach(([key, clone]) => {
-      if (!key.startsWith(prefix) || !clone) {
-        return
-      }
-      setSafePlaybackRate(clone, sourceVideo.playbackRate)
-      if (Math.abs((clone.currentTime || 0) - (sourceVideo.currentTime || 0)) > 0.075) {
-        clone.currentTime = sourceVideo.currentTime || 0
-      }
-      if (sourceVideo.paused) {
-        clone.pause()
-      } else {
-        tryResumeVideo(clone)
-      }
-    })
-  }
-
-  const pauseKaleidoClonePlayback = (layerIndex) => {
-    const prefix = `${layerIndex}-`
-    Object.entries(kaleidoCloneRefsRef.current).forEach(([key, clone]) => {
-      if (key.startsWith(prefix) && clone) {
-        clone.pause()
-      }
-    })
-  }
 
   const bounceClipRequestKey = useMemo(
     () => layers
@@ -600,7 +569,6 @@ export default function OutputPreview({
         : Math.max(0.05, Math.min(4, (motion.baseSpeed ?? 1) * tempoScale + speedBoost))
 
       setSafePlaybackRate(video, baselinePlaybackRate)
-      syncKaleidoClonePlayback(layer.layerIndex, video)
 
       const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
       const timelineAmount = clamp01(motion.timelineAmount ?? 0)
@@ -629,13 +597,11 @@ export default function OutputPreview({
 
         if (linkedTimelineSpeed <= 0.0001) {
           video.pause()
-          pauseKaleidoClonePlayback(layer.layerIndex)
           lastTimelineTriggerRef.current[layer.layerIndex] = false
           return
         }
 
         setSafePlaybackRate(video, linkedTimelineSpeed)
-        syncKaleidoClonePlayback(layer.layerIndex, video)
         lastTimelineTriggerRef.current[layer.layerIndex] = true
         tryResumeVideo(video)
         return
@@ -663,19 +629,16 @@ export default function OutputPreview({
         const drivenSpeed = clamp01(smoothstep01(normalizedLevel) * timelineAmount)
         if (drivenSpeed <= 0.0001) {
           video.pause()
-          pauseKaleidoClonePlayback(layer.layerIndex)
           lastTimelineTriggerRef.current[layer.layerIndex] = false
           return
         }
 
         setSafePlaybackRate(video, drivenSpeed)
-        syncKaleidoClonePlayback(layer.layerIndex, video)
         lastTimelineTriggerRef.current[layer.layerIndex] = true
         tryResumeVideo(video)
         return
       }
 
-      syncKaleidoClonePlayback(layer.layerIndex, video)
       tryResumeVideo(video)
     })
   }, [layers, bassLevel, spectrumLevels, bpm])
@@ -1442,9 +1405,8 @@ export default function OutputPreview({
                 style={{
                   clipPath: sliceClip,
                   transform: `rotate(${((360 / kaleidoSlices.length) * sliceIndex).toFixed(2)}deg)`,
-                  '--kaleido-slice-rotate': `${(kaleidoAngleDeg + (360 / kaleidoSlices.length) * sliceIndex * 0.6).toFixed(2)}deg`,
-                  '--kaleido-slice-scale': `${(1.08 + kaleidoIntensity * 0.42).toFixed(3)}`,
-                  '--kaleido-slice-shift': `${(kaleidoIntensity * 12 + (sliceIndex % 3) * 2.5).toFixed(2)}%`,
+                  '--kaleido-slice-rotate': `${(kaleidoAngleDeg + (360 / kaleidoSlices.length) * sliceIndex).toFixed(2)}deg`,
+                  '--kaleido-slice-scale': `${(1.02 + kaleidoIntensity * 0.2).toFixed(3)}`,
                 }}
               >
                 <div className="kaleido-slice__content">
@@ -1458,9 +1420,6 @@ export default function OutputPreview({
                     return (
                       <video
                         key={cloneKey}
-                        ref={(el) => {
-                          kaleidoCloneRefsRef.current[`${layer.layerIndex}-${sliceIndex}`] = el
-                        }}
                         className="kaleido-video"
                         src={renderInfo.src}
                         autoPlay

@@ -166,13 +166,13 @@ body.output-window #root {
 .kaleido-slice__content {
   position: absolute;
   inset: 0;
-  transform: translateX(var(--kaleido-slice-shift, 0%)) rotate(var(--kaleido-slice-rotate, 0deg)) scale(var(--kaleido-slice-scale, 1.1));
+  transform: rotate(var(--kaleido-slice-rotate, 0deg)) scale(var(--kaleido-slice-scale, 1.08));
   transform-origin: 50% 50%;
   will-change: transform;
 }
 
 .kaleido-slice.is-mirror .kaleido-slice__content {
-  transform: translateX(calc(-1 * var(--kaleido-slice-shift, 0%))) rotate(var(--kaleido-slice-rotate, 0deg)) scale(var(--kaleido-slice-scale, 1.1)) scaleX(-1);
+  transform: rotate(var(--kaleido-slice-rotate, 0deg)) scale(var(--kaleido-slice-scale, 1.08)) scaleX(-1);
 }
 
 .kaleido-video {
