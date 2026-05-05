@@ -181,6 +181,40 @@ body.output-window #root {
   object-fit: cover;
 }
 
+.kaleido-stage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  mix-blend-mode: screen;
+}
+
+.kaleido-slice {
+  position: absolute;
+  inset: -26%;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+.kaleido-slice__content {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--kaleido-stage-rotate, 0deg));
+  transform-origin: 50% 50%;
+}
+
+.kaleido-slice.is-mirror .kaleido-slice__content {
+  transform: rotate(var(--kaleido-stage-rotate, 0deg)) scaleX(-1);
+}
+
+.kaleido-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .fx-glow-layer,
 .fx-strobe-layer,
 .fx-blackout-layer {

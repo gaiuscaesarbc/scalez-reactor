@@ -171,6 +171,21 @@ function setSafePlaybackRate(video, rate) {
   }
 }
 
+function buildKaleidoSlicePolygons(segmentCount) {
+  const count = Math.max(3, Math.min(18, Math.round(segmentCount || 6)))
+  const step = 360 / count
+  const radius = 92
+  return Array.from({ length: count }, (_, index) => {
+    const start = -90 + index * step
+    const end = start + step
+    const x1 = 50 + Math.cos((start * Math.PI) / 180) * radius
+    const y1 = 50 + Math.sin((start * Math.PI) / 180) * radius
+    const x2 = 50 + Math.cos((end * Math.PI) / 180) * radius
+    const y2 = 50 + Math.sin((end * Math.PI) / 180) * radius
+    return `polygon(50% 50%, ${x1.toFixed(3)}% ${y1.toFixed(3)}%, ${x2.toFixed(3)}% ${y2.toFixed(3)}%)`
+  })
+}
+
 const BOUNCE_FORWARD_RETRY_LIMIT = 3
 const BOUNCE_REVERSE_COOLDOWN_MS = 30000
 const BOUNCE_FORWARD_RETRY_RESET_MS = 15000
@@ -233,9 +248,10 @@ export default function OutputPreview({
   const previewRef = useRef(null)
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
+  const kaleidoCloneRefsRef = useRef({})
   const srcLogRef = useRef({})
   const canPlayLogRef = useRef({})
-  const [, setBounceRenderVersion] = useState(0)
+  const [bounceRenderVersion, setBounceRenderVersion] = useState(0)
   const [strobeFlash, setStrobeFlash] = useState({ key: 0, opacity: 0 })
   const [perfStats, setPerfStats] = useState({ cpuPercent: 0, gpuPercent: 0 })
   const playAttemptRef = useRef({})
@@ -287,6 +303,36 @@ export default function OutputPreview({
   const latestSpectrumRef = useRef(spectrumLevels)
   const [syncStatus, setSyncStatus] = useState('synced')
   const [videoErrors, setVideoErrors] = useState({})
+
+  const syncKaleidoClonePlayback = (layerIndex, sourceVideo) => {
+    if (!sourceVideo) {
+      return
+    }
+    const prefix = `${layerIndex}-`
+    Object.entries(kaleidoCloneRefsRef.current).forEach(([key, clone]) => {
+      if (!key.startsWith(prefix) || !clone) {
+        return
+      }
+      setSafePlaybackRate(clone, sourceVideo.playbackRate)
+      if (Math.abs((clone.currentTime || 0) - (sourceVideo.currentTime || 0)) > 0.075) {
+        clone.currentTime = sourceVideo.currentTime || 0
+      }
+      if (sourceVideo.paused) {
+        clone.pause()
+      } else {
+        tryResumeVideo(clone)
+      }
+    })
+  }
+
+  const pauseKaleidoClonePlayback = (layerIndex) => {
+    const prefix = `${layerIndex}-`
+    Object.entries(kaleidoCloneRefsRef.current).forEach(([key, clone]) => {
+      if (key.startsWith(prefix) && clone) {
+        clone.pause()
+      }
+    })
+  }
 
   const bounceClipRequestKey = useMemo(
     () => layers
@@ -545,6 +591,7 @@ export default function OutputPreview({
         : Math.max(0.05, Math.min(4, (motion.baseSpeed ?? 1) * tempoScale + speedBoost))
 
       setSafePlaybackRate(video, baselinePlaybackRate)
+      syncKaleidoClonePlayback(layer.layerIndex, video)
 
       const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
       const timelineAmount = clamp01(motion.timelineAmount ?? 0)
@@ -573,11 +620,13 @@ export default function OutputPreview({
 
         if (linkedTimelineSpeed <= 0.0001) {
           video.pause()
+          pauseKaleidoClonePlayback(layer.layerIndex)
           lastTimelineTriggerRef.current[layer.layerIndex] = false
           return
         }
 
         setSafePlaybackRate(video, linkedTimelineSpeed)
+        syncKaleidoClonePlayback(layer.layerIndex, video)
         lastTimelineTriggerRef.current[layer.layerIndex] = true
         tryResumeVideo(video)
         return
@@ -605,16 +654,19 @@ export default function OutputPreview({
         const drivenSpeed = clamp01(smoothstep01(normalizedLevel) * timelineAmount)
         if (drivenSpeed <= 0.0001) {
           video.pause()
+          pauseKaleidoClonePlayback(layer.layerIndex)
           lastTimelineTriggerRef.current[layer.layerIndex] = false
           return
         }
 
         setSafePlaybackRate(video, drivenSpeed)
+        syncKaleidoClonePlayback(layer.layerIndex, video)
         lastTimelineTriggerRef.current[layer.layerIndex] = true
         tryResumeVideo(video)
         return
       }
 
+      syncKaleidoClonePlayback(layer.layerIndex, video)
       tryResumeVideo(video)
     })
   }, [layers, bassLevel, spectrumLevels, bpm])
@@ -1192,6 +1244,42 @@ export default function OutputPreview({
     tryResumeVideo(video)
   }
 
+  const getRenderableLayer = useCallback((layer) => {
+    const active = typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
+    const canRenderVideo =
+      layer.visible &&
+      active &&
+      active.status === 'loaded' &&
+      Boolean(active.filePath) &&
+      !videoErrors[getVideoErrorKey(layer.layerIndex, active.slotIndex, active.filePath)]
+
+    if (!canRenderVideo) {
+      return {
+        canRenderVideo: false,
+        active,
+        bounceReady: false,
+        effectivePath: active?.filePath || '',
+        src: '',
+      }
+    }
+
+    const bounceEnabled = Boolean(layer.videoMotion?.bounceEnabled)
+    const bouncePhase = bouncePhaseRef.current[layer.layerIndex] || 'forward'
+    const reversePath = reverseClipPathRef.current[getBounceClipKey(active.filePath)]
+    const bounceReady = bounceEnabled && Boolean(reversePath)
+    const effectivePath = bounceEnabled && bouncePhase === 'reverse' && reversePath
+      ? reversePath
+      : active.filePath
+
+    return {
+      canRenderVideo: true,
+      active,
+      bounceReady,
+      effectivePath,
+      src: toFileUrl(effectivePath),
+    }
+  }, [videoErrors])
+
   const activeCount = layers.reduce(
     (count, layer) => (typeof layer.activeSlotIndex === 'number' ? count + 1 : count),
     0,
@@ -1202,18 +1290,20 @@ export default function OutputPreview({
   const kaleidoSource = masterFx?.kaleidoSource || 'mid'
   const kaleidoBandLevel = clamp01(getSpectrumSourceLevel(spectrumLevels, kaleidoSource, bassLevel))
   const kaleidoIntensity = clamp01(
-    kaleidoBaseAmount + kaleidoBandLevel * kaleidoAudioAmount * (1 - kaleidoBaseAmount),
+    kaleidoBaseAmount * (0.35 + 0.65 * (kaleidoAudioAmount > 0 ? kaleidoBandLevel : 1)),
   )
   const kaleidoBaseSegments = Number.isFinite(masterFx?.kaleidoSegments)
     ? Math.round(masterFx.kaleidoSegments)
     : 6
   const kaleidoSegments = Math.max(
     3,
-    Math.min(18, kaleidoBaseSegments + Math.round(kaleidoBandLevel * kaleidoAudioAmount * 8)),
+    Math.min(18, kaleidoBaseSegments + Math.round(kaleidoBandLevel * kaleidoAudioAmount * kaleidoBaseAmount * 8)),
   )
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * 90 + kaleidoBandLevel * kaleidoAudioAmount * 150
   const kaleidoAngleDeg = ((Date.now() * 0.001 * kaleidoSpinDegPerSec) % 360 + 360) % 360
+  const kaleidoSlices = useMemo(() => buildKaleidoSlicePolygons(kaleidoSegments), [kaleidoSegments])
+  const baseLayerOpacity = Math.max(0, 1 - kaleidoIntensity * 1.2)
 
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
@@ -1256,14 +1346,9 @@ export default function OutputPreview({
         )}
 
         {layers.map((layer) => {
-          const active =
-            typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
-          const canRenderVideo =
-            layer.visible &&
-            active &&
-            active.status === 'loaded' &&
-            Boolean(active.filePath) &&
-            !videoErrors[getVideoErrorKey(layer.layerIndex, active.slotIndex, active.filePath)]
+          const renderInfo = getRenderableLayer(layer)
+          const active = renderInfo.active
+          const canRenderVideo = renderInfo.canRenderVideo
 
           if (!canRenderVideo) {
             return (
@@ -1280,14 +1365,10 @@ export default function OutputPreview({
           }
 
           const bounceEnabled = Boolean(layer.videoMotion?.bounceEnabled)
-          const bouncePhase = bouncePhaseRef.current[layer.layerIndex] || 'forward'
-          const reversePath = reverseClipPathRef.current[getBounceClipKey(active.filePath)]
-          const bounceReady = bounceEnabled && Boolean(reversePath)
-          const effectivePath = bounceEnabled && bouncePhase === 'reverse' && reversePath
-            ? reversePath
-            : active.filePath
+          const bounceReady = renderInfo.bounceReady
+          const effectivePath = renderInfo.effectivePath
           const videoKey = `video-${layer.label}-${effectivePath}`
-          const src = toFileUrl(effectivePath)
+          const src = renderInfo.src
           if (MEDIA_DEBUG && !srcLogRef.current[videoKey]) {
             srcLogRef.current[videoKey] = true
             console.info(
@@ -1339,7 +1420,7 @@ export default function OutputPreview({
                 handleVideoError(layer.layerIndex, active.slotIndex, active.filePath, effectivePath, event)
               }
               style={{
-                opacity: layer.opacity,
+                opacity: layer.opacity * baseLayerOpacity,
                 mixBlendMode: blendModeToCss(layer.blendMode),
                 transform: `translate3d(var(--shake-x, 0px), var(--shake-y, 0px), 0) scale(${layer.videoMotion?.scale ?? 1})`,
                 transformOrigin: 'center center',
@@ -1347,6 +1428,59 @@ export default function OutputPreview({
             />
           )
         })}
+
+        {kaleidoIntensity > 0.01 && (
+          <div
+            className="kaleido-stage"
+            style={{
+              opacity: kaleidoIntensity,
+              '--kaleido-stage-rotate': `${kaleidoAngleDeg.toFixed(2)}deg`,
+            }}
+          >
+            {kaleidoSlices.map((sliceClip, sliceIndex) => (
+              <div
+                key={`kaleido-slice-${sliceIndex}`}
+                className={`kaleido-slice ${sliceIndex % 2 === 1 ? 'is-mirror' : ''}`}
+                style={{
+                  clipPath: sliceClip,
+                  transform: `rotate(${((360 / kaleidoSlices.length) * sliceIndex).toFixed(2)}deg)`,
+                }}
+              >
+                <div className="kaleido-slice__content">
+                  {layers.map((layer) => {
+                    const renderInfo = getRenderableLayer(layer)
+                    const active = renderInfo.active
+                    if (!renderInfo.canRenderVideo || !active) {
+                      return null
+                    }
+                    const cloneKey = `kaleido-${layer.layerIndex}-${sliceIndex}-${renderInfo.effectivePath}`
+                    return (
+                      <video
+                        key={cloneKey}
+                        ref={(el) => {
+                          kaleidoCloneRefsRef.current[`${layer.layerIndex}-${sliceIndex}`] = el
+                        }}
+                        className="kaleido-video"
+                        src={renderInfo.src}
+                        autoPlay
+                        loop={!renderInfo.bounceReady}
+                        muted
+                        playsInline
+                        preload="auto"
+                        style={{
+                          opacity: layer.opacity,
+                          mixBlendMode: blendModeToCss(layer.blendMode),
+                          transform: `scale(${layer.videoMotion?.scale ?? 1})`,
+                          transformOrigin: 'center center',
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {activeCount === 0 && (
           <div className="fallback-screen">
