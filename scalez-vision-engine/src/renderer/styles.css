@@ -136,39 +136,6 @@ body.output-window #root {
   background: #000;
 }
 
-.fx-kaleido-layer {
-  position: absolute;
-  inset: -8%;
-  pointer-events: none;
-  opacity: var(--kaleido-opacity, 0);
-  mix-blend-mode: screen;
-  transform: rotate(var(--kaleido-angle, 0deg)) scale(1.04);
-  transform-origin: center center;
-  filter: saturate(1.35) contrast(1.2);
-}
-
-.fx-kaleido-layer::before,
-.fx-kaleido-layer::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    repeating-conic-gradient(
-      from var(--kaleido-angle, 0deg),
-      rgba(80, 210, 255, var(--kaleido-line-a, 0.2)) 0deg,
-      rgba(255, 166, 71, var(--kaleido-line-b, 0.16)) calc(var(--kaleido-step, 60deg) * 0.28),
-      rgba(0, 0, 0, 0) calc(var(--kaleido-step, 60deg) * 0.44),
-      rgba(0, 0, 0, 0) var(--kaleido-step, 60deg)
-    ),
-    radial-gradient(circle at center, rgba(0, 0, 0, 0) 0 13%, rgba(0, 0, 0, 0.24) 36%, rgba(0, 0, 0, 0) 72%);
-}
-
-.fx-kaleido-layer::after {
-  transform: rotate(calc(var(--kaleido-step, 60deg) * 0.5)) scale(1.08) scaleX(-1);
-  opacity: var(--kaleido-pulse, 0.4);
-  mix-blend-mode: plus-lighter;
-}
-
 .preview-layer-fallback {
   display: none;
 }
@@ -186,7 +153,7 @@ body.output-window #root {
   inset: 0;
   pointer-events: none;
   overflow: hidden;
-  mix-blend-mode: screen;
+  mix-blend-mode: normal;
 }
 
 .kaleido-slice {
@@ -199,12 +166,13 @@ body.output-window #root {
 .kaleido-slice__content {
   position: absolute;
   inset: 0;
-  transform: rotate(var(--kaleido-stage-rotate, 0deg));
+  transform: translateX(var(--kaleido-slice-shift, 0%)) rotate(var(--kaleido-slice-rotate, 0deg)) scale(var(--kaleido-slice-scale, 1.1));
   transform-origin: 50% 50%;
+  will-change: transform;
 }
 
 .kaleido-slice.is-mirror .kaleido-slice__content {
-  transform: rotate(var(--kaleido-stage-rotate, 0deg)) scaleX(-1);
+  transform: translateX(calc(-1 * var(--kaleido-slice-shift, 0%))) rotate(var(--kaleido-slice-rotate, 0deg)) scale(var(--kaleido-slice-scale, 1.1)) scaleX(-1);
 }
 
 .kaleido-video {

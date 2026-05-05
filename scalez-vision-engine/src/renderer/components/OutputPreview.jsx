@@ -1312,7 +1312,8 @@ export default function OutputPreview({
   const kaleidoSpinDegPerSec = kaleidoSpinBase * 90 + kaleidoBandLevel * kaleidoAudioAmount * 150
   const kaleidoAngleDeg = ((Date.now() * 0.001 * kaleidoSpinDegPerSec) % 360 + 360) % 360
   const kaleidoSlices = useMemo(() => buildKaleidoSlicePolygons(kaleidoSegments), [kaleidoSegments])
-  const baseLayerOpacity = Math.max(0, 1 - kaleidoIntensity * 1.2)
+  const kaleidoActive = kaleidoIntensity > 0.01
+  const baseLayerOpacity = kaleidoActive ? 0 : 1
 
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
@@ -1341,20 +1342,6 @@ export default function OutputPreview({
         }}
       >
         <div className="preview-backdrop" />
-
-        {kaleidoIntensity > 0.01 && (
-          <div
-            className="fx-kaleido-layer"
-            style={{
-              '--kaleido-angle': `${kaleidoAngleDeg.toFixed(2)}deg`,
-              '--kaleido-step': `${(360 / kaleidoSegments).toFixed(2)}deg`,
-              '--kaleido-opacity': (kaleidoIntensity * 0.88).toFixed(3),
-              '--kaleido-line-a': (0.12 + kaleidoIntensity * 0.42).toFixed(3),
-              '--kaleido-line-b': (0.08 + kaleidoIntensity * 0.36).toFixed(3),
-              '--kaleido-pulse': (0.18 + kaleidoBandLevel * 0.82).toFixed(3),
-            }}
-          />
-        )}
 
         {layers.map((layer) => {
           const renderInfo = getRenderableLayer(layer)
@@ -1440,11 +1427,11 @@ export default function OutputPreview({
           )
         })}
 
-        {kaleidoIntensity > 0.01 && (
+        {kaleidoActive && (
           <div
             className="kaleido-stage"
             style={{
-              opacity: kaleidoIntensity,
+              opacity: (0.2 + kaleidoIntensity * 0.8).toFixed(3),
               '--kaleido-stage-rotate': `${kaleidoAngleDeg.toFixed(2)}deg`,
             }}
           >
@@ -1455,6 +1442,9 @@ export default function OutputPreview({
                 style={{
                   clipPath: sliceClip,
                   transform: `rotate(${((360 / kaleidoSlices.length) * sliceIndex).toFixed(2)}deg)`,
+                  '--kaleido-slice-rotate': `${(kaleidoAngleDeg + (360 / kaleidoSlices.length) * sliceIndex * 0.6).toFixed(2)}deg`,
+                  '--kaleido-slice-scale': `${(1.08 + kaleidoIntensity * 0.42).toFixed(3)}`,
+                  '--kaleido-slice-shift': `${(kaleidoIntensity * 12 + (sliceIndex % 3) * 2.5).toFixed(2)}%`,
                 }}
               >
                 <div className="kaleido-slice__content">
