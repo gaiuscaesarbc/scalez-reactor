@@ -154,6 +154,23 @@ function tryResumeVideo(video) {
   }
 }
 
+const MIN_SUPPORTED_PLAYBACK_RATE = 0.0625
+const MAX_SUPPORTED_PLAYBACK_RATE = 16
+
+function setSafePlaybackRate(video, rate) {
+  if (!video || !Number.isFinite(rate)) {
+    return
+  }
+
+  const safeRate = Math.max(MIN_SUPPORTED_PLAYBACK_RATE, Math.min(MAX_SUPPORTED_PLAYBACK_RATE, rate))
+  try {
+    video.playbackRate = safeRate
+  } catch {
+    // Some codecs reject extreme values; fallback to minimum supported speed.
+    video.playbackRate = MIN_SUPPORTED_PLAYBACK_RATE
+  }
+}
+
 const BOUNCE_FORWARD_RETRY_LIMIT = 3
 const BOUNCE_REVERSE_COOLDOWN_MS = 30000
 const BOUNCE_FORWARD_RETRY_RESET_MS = 15000
@@ -527,7 +544,7 @@ export default function OutputPreview({
         ? Math.max(0.05, Math.min(4, (motion.bounceSpeed ?? 1) * tempoScale + speedBoost))
         : Math.max(0.05, Math.min(4, (motion.baseSpeed ?? 1) * tempoScale + speedBoost))
 
-      video.playbackRate = baselinePlaybackRate
+      setSafePlaybackRate(video, baselinePlaybackRate)
 
       const timelineLevel = getSpectrumSourceLevel(spectrumLevels, motion.timelineSource || 'low', bassLevel)
       const timelineAmount = clamp01(motion.timelineAmount ?? 0)
@@ -560,7 +577,7 @@ export default function OutputPreview({
           return
         }
 
-        video.playbackRate = linkedTimelineSpeed
+        setSafePlaybackRate(video, linkedTimelineSpeed)
         lastTimelineTriggerRef.current[layer.layerIndex] = true
         tryResumeVideo(video)
         return
@@ -592,7 +609,7 @@ export default function OutputPreview({
           return
         }
 
-        video.playbackRate = drivenSpeed
+        setSafePlaybackRate(video, drivenSpeed)
         lastTimelineTriggerRef.current[layer.layerIndex] = true
         tryResumeVideo(video)
         return
