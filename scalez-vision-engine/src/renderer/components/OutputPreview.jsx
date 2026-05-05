@@ -242,6 +242,7 @@ export default function OutputPreview({
 }) {
   const previewRef = useRef(null)
   const kaleidoCanvasRef = useRef(null)
+  const kaleidoSourceCanvasRef = useRef(null)
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
   const srcLogRef = useRef({})
@@ -1281,8 +1282,8 @@ export default function OutputPreview({
   const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
   const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
   const kaleidoActive = kaleidoIntensity > 0.01
-  // Let amount push decisively from raw video toward a full kaleido render.
-  const baseLayerOpacity = kaleidoActive ? Math.max(0.08, 1 - Math.pow(kaleidoIntensity, 0.82) * 1.02) : 1
+  // The canvas now renders both the plain composite and kaleido composite, so keep DOM video nearly hidden.
+  const baseLayerOpacity = kaleidoActive ? 0.04 : 1
   const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
   const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
   const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
@@ -1303,8 +1304,14 @@ export default function OutputPreview({
       return undefined
     }
 
+    if (!kaleidoSourceCanvasRef.current) {
+      kaleidoSourceCanvasRef.current = document.createElement('canvas')
+    }
+    const sourceCanvas = kaleidoSourceCanvasRef.current
+
     const ctx = canvas.getContext('2d')
-    if (!ctx) {
+    const sourceCtx = sourceCanvas.getContext('2d')
+    if (!ctx || !sourceCtx) {
       return undefined
     }
 
@@ -1331,14 +1338,22 @@ export default function OutputPreview({
         canvas.width = targetW
         canvas.height = targetH
       }
+      if (sourceCanvas.width !== width || sourceCanvas.height !== height) {
+        sourceCanvas.width = width
+        sourceCanvas.height = height
+      }
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, width, height)
+
+      sourceCtx.setTransform(1, 0, 0, 1, 0, 0)
+      sourceCtx.clearRect(0, 0, width, height)
 
       const cx = width * 0.5
       const cy = height * 0.5
       const radius = Math.hypot(width, height)
       const safeIntensity = clamp01(params.intensity)
+      const blendAmount = smoothstep01(safeIntensity)
       const safeSegments = Number.isFinite(params.segments) ? params.segments : 8
       const segments = Math.max(3, Math.min(18, Math.round(safeSegments)))
       const step = (Math.PI * 2) / segments
@@ -1348,6 +1363,39 @@ export default function OutputPreview({
       const safeZoom = Number.isFinite(params.zoom) ? Math.max(1.01, Math.min(2.1, params.zoom)) : 1.14
       const safeOffsetPct = Number.isFinite(params.offsetPct) ? Math.max(0.005, Math.min(0.22, params.offsetPct)) : 0.08
       let drewAnyVideo = false
+
+      const currentLayers = latestLayersRef.current || []
+      currentLayers.forEach((layer) => {
+        const active =
+          typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
+        if (!layer.visible || !active?.filePath || active.status !== 'loaded') {
+          return
+        }
+        const srcVideo = videoRefsRef.current[layer.layerIndex]
+        if (!srcVideo || srcVideo.readyState < 2) {
+          return
+        }
+
+        sourceCtx.globalAlpha = Math.max(0, Math.min(1, layer.opacity || 0))
+        sourceCtx.globalCompositeOperation = blendModeToCanvasOperation(layer.blendMode)
+        const scale = Number.isFinite(layer.videoMotion?.scale) ? layer.videoMotion.scale : 1
+
+        sourceCtx.save()
+        sourceCtx.translate(cx, cy)
+        sourceCtx.scale(scale, scale)
+        sourceCtx.drawImage(srcVideo, -width * 0.5, -height * 0.5, width, height)
+        sourceCtx.restore()
+        drewAnyVideo = true
+      })
+
+      if (!drewAnyVideo) {
+        frameId = requestAnimationFrame(draw)
+        return
+      }
+
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.globalAlpha = Math.max(0, 1 - blendAmount)
+      ctx.drawImage(sourceCanvas, 0, 0, width, height)
 
       for (let i = 0; i < segments; i += 1) {
         ctx.save()
@@ -1371,35 +1419,11 @@ export default function OutputPreview({
         ctx.scale(safeZoom * sliceScale, safeZoom * sliceScale)
         ctx.translate(0, -height * safeOffsetPct)
 
-        const currentLayers = latestLayersRef.current || []
-        currentLayers.forEach((layer) => {
-          const active =
-            typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
-          if (!layer.visible || !active?.filePath || active.status !== 'loaded') {
-            return
-          }
-          const srcVideo = videoRefsRef.current[layer.layerIndex]
-          if (!srcVideo || srcVideo.readyState < 2) {
-            return
-          }
-
-          ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity || 0))
-          ctx.globalCompositeOperation = blendModeToCanvasOperation(layer.blendMode)
-          const scale = Number.isFinite(layer.videoMotion?.scale) ? layer.videoMotion.scale : 1
-
-          ctx.save()
-          ctx.scale(scale, scale)
-          ctx.drawImage(srcVideo, -width * 0.5, -height * 0.5, width, height)
-          ctx.restore()
-          drewAnyVideo = true
-        })
+        ctx.globalAlpha = 0.4 + blendAmount * 0.6
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
 
         ctx.restore()
-      }
-
-      if (!drewAnyVideo) {
-        frameId = requestAnimationFrame(draw)
-        return
       }
 
       const core = Math.max(4, (params.coreSizePct / 100) * Math.min(width, height))
@@ -1543,7 +1567,7 @@ export default function OutputPreview({
           <canvas
             ref={kaleidoCanvasRef}
             className="kaleido-canvas"
-            style={{ opacity: (0.38 + kaleidoIntensity * 0.62).toFixed(3) }}
+            style={{ opacity: '1' }}
           />
         )}
 
