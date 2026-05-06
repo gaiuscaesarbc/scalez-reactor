@@ -68,6 +68,20 @@ export default function ShowManager({
     setDeleteConfirm(null)
   }
 
+  const loadItems = [
+    ...defaultScenes.map((scene) => ({
+      id: scene.id,
+      name: scene.name,
+      description: scene.description,
+      type: 'default',
+    })),
+    ...savedShows.map((show) => ({
+      ...show,
+      id: `saved-${show.name}`,
+      type: 'saved',
+    })),
+  ]
+
   return (
     <div className="show-manager">
       <button
@@ -125,61 +139,49 @@ export default function ShowManager({
             {/* Load Section */}
             <section className="show-section">
               <h4>Load Show</h4>
-              {savedShows.length === 0 ? (
-                <p className="show-empty">No saved shows yet</p>
+              {loadItems.length === 0 ? (
+                <p className="show-empty">No scenes or saved shows yet</p>
               ) : (
                 <div className="show-list">
-                  {savedShows.map((show) => (
-                    <div key={show.name} className="show-item">
+                  {loadItems.map((item) => (
+                    <div key={item.id} className={`show-item${item.type === 'default' ? ' show-item--scene' : ''}`}>
                       <div className="show-item__info">
-                        <div className="show-item__name">{show.name}</div>
-                        <div className="show-item__time">
-                          {new Date(show.timestamp).toLocaleDateString()} at{' '}
-                          {new Date(show.timestamp).toLocaleTimeString()}
+                        <div className="show-item__name">
+                          {item.name}
+                          {item.type === 'default' ? ' · Built-in' : ''}
                         </div>
+                        {item.type === 'default' ? (
+                          <div className="show-item__time">{item.description}</div>
+                        ) : (
+                          <div className="show-item__time">
+                            {new Date(item.timestamp).toLocaleDateString()} at{' '}
+                            {new Date(item.timestamp).toLocaleTimeString()}
+                          </div>
+                        )}
                       </div>
                       <div className="show-item__actions">
                         <button
                           type="button"
-                          className="show-btn show-btn--load"
-                          onClick={() => handleLoad(show)}
+                          className={`show-btn ${item.type === 'default' ? 'show-btn--scene' : 'show-btn--load'}`}
+                          onClick={() => {
+                            if (item.type === 'default') {
+                              handleLoadDefault(item)
+                            } else {
+                              handleLoad(item)
+                            }
+                          }}
                         >
                           Load
                         </button>
-                        <button
-                          type="button"
-                          className="show-btn show-btn--delete"
-                          onClick={() => handleDelete(show)}
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section className="show-section">
-              <h4>Default Scenes</h4>
-              {defaultScenes.length === 0 ? (
-                <p className="show-empty">No default scenes available</p>
-              ) : (
-                <div className="show-list show-list--scenes">
-                  {defaultScenes.map((scene) => (
-                    <div key={scene.id} className="show-item show-item--scene">
-                      <div className="show-item__info">
-                        <div className="show-item__name">{scene.name}</div>
-                        <div className="show-item__time">{scene.description}</div>
-                      </div>
-                      <div className="show-item__actions">
-                        <button
-                          type="button"
-                          className="show-btn show-btn--scene"
-                          onClick={() => handleLoadDefault(scene)}
-                        >
-                          Load
-                        </button>
+                        {item.type === 'saved' && (
+                          <button
+                            type="button"
+                            className="show-btn show-btn--delete"
+                            onClick={() => handleDelete(item)}
+                          >
+                            🗑️
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
