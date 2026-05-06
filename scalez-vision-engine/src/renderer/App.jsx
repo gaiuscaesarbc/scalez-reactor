@@ -985,6 +985,44 @@ function ControlShell() {
     })
   }, [layers, layerVideoMotion])
 
+  const applyDefaultSceneLayout = useCallback((sceneId) => {
+    const seed = Array.from(sceneId || '').reduce((acc, char, index) => acc + char.charCodeAt(0) * (index + 1), 0)
+    const blendCycle = ['normal', 'screen', 'add']
+
+    layers.forEach((layer, layerIndex) => {
+      const loadedSlots = layer.slots
+        .filter((slot) => slot.status === 'loaded' && Boolean(slot.filePath))
+        .map((slot) => slot.slotIndex)
+
+      if (loadedSlots.length === 0) {
+        clearLayer(layerIndex)
+        setLayerVisible(layerIndex, false)
+        return
+      }
+
+      const pattern = (seed + layerIndex * 11) % 5
+      const slotPickIndex = (seed * (layerIndex + 2) + layerIndex * 7) % loadedSlots.length
+      const chosenSlot = loadedSlots[slotPickIndex]
+      const blendMode = blendCycle[(seed + layerIndex * 3) % blendCycle.length]
+      const baseOpacity = 0.72 + ((seed + layerIndex * 13) % 26) / 100
+
+      setLayerVisible(layerIndex, true)
+      setLayerBlendMode(layerIndex, blendMode)
+
+      if (pattern === 0 && layerIndex === 2) {
+        setLayerOpacity(layerIndex, 0.58)
+      } else if (pattern === 1 && layerIndex === 0) {
+        setLayerOpacity(layerIndex, 1)
+      } else if (pattern === 2 && layerIndex === 1) {
+        setLayerOpacity(layerIndex, 0.66)
+      } else {
+        setLayerOpacity(layerIndex, Math.min(1, Math.max(0.45, baseOpacity)))
+      }
+
+      triggerClip(layerIndex, chosenSlot)
+    })
+  }, [layers, clearLayer, setLayerVisible, setLayerBlendMode, setLayerOpacity, triggerClip])
+
   const rebuildLayerReverseCache = useCallback(async (layerIndex) => {
     const layer = layers[layerIndex]
     if (!layer || typeof layer.activeSlotIndex !== 'number') {
@@ -1168,6 +1206,7 @@ function ControlShell() {
                 return
               }
               applyAppSettings(scene.settings)
+              applyDefaultSceneLayout(sceneId)
               setBlackout(false)
             }}
             onDeleteShow={(name) => {
