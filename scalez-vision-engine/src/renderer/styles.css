@@ -1984,6 +1984,12 @@ body.output-window .output-shell {
   gap: 8px;
 }
 
+.show-list--scenes {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 .show-item {
   border: 1px solid rgba(74, 180, 255, 0.3);
   border-radius: 8px;
@@ -2021,6 +2027,23 @@ body.output-window .output-shell {
   display: grid;
   grid-template-columns: auto auto;
   gap: 6px;
+}
+
+.show-item--scene {
+  grid-template-columns: 1fr auto;
+  border-color: rgba(141, 109, 255, 0.35);
+  background: rgba(18, 16, 52, 0.42);
+}
+
+.show-item--scene:hover {
+  border-color: rgba(141, 109, 255, 0.55);
+  background: rgba(18, 16, 52, 0.62);
+}
+
+.show-btn--scene {
+  min-width: 64px;
+  background: rgba(141, 109, 255, 0.2);
+  border-color: rgba(141, 109, 255, 0.65);
 }
 
 .show-confirmation {

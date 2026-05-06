@@ -27,6 +27,7 @@ import {
   DEFAULT_MASTER_FX,
   useOutputStateSubscription,
 } from './hooks/useOutputSync'
+import { DEFAULT_SCENE_PRESETS } from './utils/defaultScenes'
 
 function clamp01(value) {
   return Math.min(1, Math.max(0, value))
@@ -1147,6 +1148,7 @@ function ControlShell() {
           <MidiPanel midiState={midiState} />
           <ShowManager
             savedShows={savedShows}
+            defaultScenes={DEFAULT_SCENE_PRESETS}
             onSaveShow={(name) => {
               saveShow(name, midiState.getMappings(), buildAppSettings())
               setSavedShows(getSavedShows())
@@ -1159,6 +1161,14 @@ function ControlShell() {
               if (midiMappings) {
                 midiState.loadMappings(midiMappings)
               }
+            }}
+            onLoadDefaultScene={(sceneId) => {
+              const scene = DEFAULT_SCENE_PRESETS.find((item) => item.id === sceneId)
+              if (!scene?.settings) {
+                return
+              }
+              applyAppSettings(scene.settings)
+              setBlackout(false)
             }}
             onDeleteShow={(name) => {
               deleteShow(name)

@@ -2,8 +2,10 @@ import { useRef, useState } from 'react'
 
 export default function ShowManager({
   savedShows,
+  defaultScenes = [],
   onSaveShow,
   onLoadShow,
+  onLoadDefaultScene,
   onDeleteShow,
 }) {
   const [isOpen, setIsOpen] = useState(false)
@@ -36,6 +38,16 @@ export default function ShowManager({
     )
     if (confirmed) {
       onLoadShow(show.name)
+      setIsOpen(false)
+    }
+  }
+
+  const handleLoadDefault = (scene) => {
+    const confirmed = window.confirm(
+      `Load default scene "${scene.name}"? Current unsaved changes will be lost.`,
+    )
+    if (confirmed) {
+      onLoadDefaultScene?.(scene.id)
       setIsOpen(false)
     }
   }
@@ -140,6 +152,33 @@ export default function ShowManager({
                           onClick={() => handleDelete(show)}
                         >
                           🗑️
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="show-section">
+              <h4>Default Scenes</h4>
+              {defaultScenes.length === 0 ? (
+                <p className="show-empty">No default scenes available</p>
+              ) : (
+                <div className="show-list show-list--scenes">
+                  {defaultScenes.map((scene) => (
+                    <div key={scene.id} className="show-item show-item--scene">
+                      <div className="show-item__info">
+                        <div className="show-item__name">{scene.name}</div>
+                        <div className="show-item__time">{scene.description}</div>
+                      </div>
+                      <div className="show-item__actions">
+                        <button
+                          type="button"
+                          className="show-btn show-btn--scene"
+                          onClick={() => handleLoadDefault(scene)}
+                        >
+                          Load
                         </button>
                       </div>
                     </div>
