@@ -136,6 +136,7 @@ function OutputShell() {
   const smoothedDropFx = syncedState?.drop?.smoothedFx || null
   const dropStrobeCount = syncedState?.drop?.strobeCount ?? 0
   const bpm = syncedState?.tempo?.bpm ?? 140
+  const sceneProgram = syncedState?.sceneProgram || null
 
   return (
     <main className="output-shell">
@@ -156,6 +157,7 @@ function OutputShell() {
         energyIntensity={energyIntensity}
         smoothedDropFx={smoothedDropFx}
         dropStrobeCount={dropStrobeCount}
+        sceneProgram={sceneProgram}
       />
     </main>
   )
@@ -213,6 +215,7 @@ function ControlShell() {
   const [showSettings, setShowSettings] = useState(false)
   const [compactMode, setCompactMode] = useState(false)
   const [savedShows, setSavedShows] = useState([])
+  const [sceneProgram, setSceneProgram] = useState(null)
   const [nativePlaybackStatus, setNativePlaybackStatus] = useState(null)
   const [nativePlaybackBusy, setNativePlaybackBusy] = useState(false)
 
@@ -672,6 +675,7 @@ function ControlShell() {
     energyReactiveEnabled,
     beatSyncEnabled,
     showEnergyDebug,
+    sceneProgram,
   })
 
   const applyAppSettings = (settings) => {
@@ -726,6 +730,9 @@ function ControlShell() {
     }
     if (typeof settings.showEnergyDebug === 'boolean') {
       setShowEnergyDebug(settings.showEnergyDebug)
+    }
+    if (typeof settings.sceneProgram === 'string' || settings.sceneProgram === null) {
+      setSceneProgram(settings.sceneProgram || null)
     }
   }
 
@@ -1167,9 +1174,10 @@ function ControlShell() {
       energyIntensity: activeEnergyIntensity,
       smoothedDropFx,
       dropStrobeCount: dropSystem.dropStrobeCount,
+      sceneProgram,
     })
     window.scalezApi?.publishOutputState?.(nextState)
-  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels, bpm, energySystemEnabled, smoothedEnergyFx, energyFxMapping.strobeCount, activeEnergyState, activeEnergyIntensity, smoothedDropFx, dropSystem.dropStrobeCount])
+  }, [effectiveLayers, effectiveMasterFx, blackout, bassLevel, spectrumLevels, bpm, energySystemEnabled, smoothedEnergyFx, energyFxMapping.strobeCount, activeEnergyState, activeEnergyIntensity, smoothedDropFx, dropSystem.dropStrobeCount, sceneProgram])
 
   return (
     <main className={`control-shell${compactMode ? ' is-compact' : ''}`}>
@@ -1192,6 +1200,7 @@ function ControlShell() {
               setSavedShows(getSavedShows())
             }}
             onLoadShow={(name) => {
+              setSceneProgram(null)
               const result = loadShow(name)
               if (result?.appSettings) {
                 applyAppSettings(result.appSettings)
@@ -1206,7 +1215,12 @@ function ControlShell() {
                 return
               }
               applyAppSettings(scene.settings)
+              setSceneProgram(sceneId)
               applyDefaultSceneLayout(sceneId)
+              for (let layerIndex = 0; layerIndex < 3; layerIndex += 1) {
+                clearLayer(layerIndex)
+                setLayerVisible(layerIndex, false)
+              }
               setBlackout(false)
             }}
             onDeleteShow={(name) => {
@@ -1345,9 +1359,10 @@ function ControlShell() {
           energySystemEnabled={energySystemEnabled}
             smoothedDropFx={smoothedDropFx}
             dropStrobeCount={dropSystem.dropStrobeCount}
+            sceneProgram={sceneProgram}
       />
 
-      {!hasAnyLoadedClip && (
+      {!hasAnyLoadedClip && !sceneProgram && (
         <p className="empty-guidance panel-glass">Load a clip into any slot to begin.</p>
       )}
 

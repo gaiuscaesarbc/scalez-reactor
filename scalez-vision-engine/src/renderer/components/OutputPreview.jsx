@@ -239,8 +239,10 @@ export default function OutputPreview({
   energySystemEnabled = false,
   smoothedDropFx = {},
   dropStrobeCount = 0,
+  sceneProgram = null,
 }) {
   const previewRef = useRef(null)
+  const generatedSceneCanvasRef = useRef(null)
   const kaleidoCanvasRef = useRef(null)
   const kaleidoSourceCanvasRef = useRef(null)
   const kaleidoSampleCanvasRef = useRef(null)
@@ -310,6 +312,11 @@ export default function OutputPreview({
   const [syncStatus, setSyncStatus] = useState('synced')
   const [videoErrors, setVideoErrors] = useState({})
   const kaleidoExclusive = clamp01(masterFx?.kaleido ?? 0) > 0.01
+  const generatedSceneActive = typeof sceneProgram === 'string' && sceneProgram.length > 0
+  const generatedSceneVariant = useMemo(
+    () => Array.from(sceneProgram || '').reduce((acc, char, index) => acc + char.charCodeAt(0) * (index + 1), 0) % 5,
+    [sceneProgram],
+  )
 
   const bounceClipRequestKey = useMemo(
     () => layers
@@ -1500,6 +1507,140 @@ export default function OutputPreview({
     }
   }, [blackout])
 
+  useEffect(() => {
+    const canvas = generatedSceneCanvasRef.current
+    if (!canvas) {
+      return undefined
+    }
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      return undefined
+    }
+
+    let frameId = null
+    const draw = (timestamp) => {
+      if (!generatedSceneActive || blackout) {
+        if (canvas.width > 0 && canvas.height > 0) {
+          ctx.setTransform(1, 0, 0, 1, 0, 0)
+          ctx.clearRect(0, 0, canvas.width, canvas.height)
+        }
+        frameId = requestAnimationFrame(draw)
+        return
+      }
+
+      const previewEl = previewRef.current
+      if (!previewEl) {
+        frameId = requestAnimationFrame(draw)
+        return
+      }
+
+      const rect = previewEl.getBoundingClientRect()
+      const width = Math.max(2, Math.round(rect.width))
+      const height = Math.max(2, Math.round(rect.height))
+      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1))
+      const targetW = Math.round(width * dpr)
+      const targetH = Math.round(height * dpr)
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW
+        canvas.height = targetH
+      }
+
+      const t = timestamp * 0.001
+      const bass = clamp01(latestBassRef.current || 0)
+      const spec = latestSpectrumRef.current || {}
+      const low = clamp01(spec.low ?? bass)
+      const mid = clamp01(spec.mid ?? low)
+      const high = clamp01(spec.high ?? mid)
+      const full = clamp01(spec.full ?? (low + mid + high) / 3)
+      const cx = width * 0.5
+      const cy = height * 0.5
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, width, height)
+      ctx.fillStyle = '#040816'
+      ctx.fillRect(0, 0, width, height)
+
+      if (generatedSceneVariant === 0) {
+        const ringCount = 12
+        for (let i = 0; i < ringCount; i += 1) {
+          const p = i / ringCount
+          const radius = (Math.min(width, height) * 0.12) + p * Math.min(width, height) * (0.42 + bass * 0.25)
+          const wobble = Math.sin(t * (1.5 + p * 3) + p * 8) * (8 + low * 30)
+          ctx.lineWidth = 2 + high * 6
+          ctx.strokeStyle = `hsla(${180 + p * 120 + t * 14}, 90%, ${40 + p * 25}%, ${0.2 + full * 0.5})`
+          ctx.beginPath()
+          ctx.arc(cx + wobble, cy, radius, 0, Math.PI * 2)
+          ctx.stroke()
+        }
+      } else if (generatedSceneVariant === 1) {
+        const barCount = 64
+        const step = width / barCount
+        for (let i = 0; i < barCount; i += 1) {
+          const p = i / (barCount - 1)
+          const band = p < 0.33 ? low : p < 0.66 ? mid : high
+          const h = Math.max(8, height * (0.1 + band * 0.65) * (0.45 + 0.55 * Math.sin(t * 5 + i * 0.35) ** 2))
+          ctx.fillStyle = `hsla(${200 + p * 120 + t * 20}, 88%, ${44 + band * 34}%, 0.78)`
+          ctx.fillRect(i * step, height - h, Math.max(2, step - 1), h)
+        }
+      } else if (generatedSceneVariant === 2) {
+        const grad = ctx.createRadialGradient(cx, cy, 20, cx, cy, Math.hypot(width, height) * (0.55 + bass * 0.2))
+        grad.addColorStop(0, `hsla(${260 + t * 18}, 96%, ${50 + mid * 24}%, 0.9)`)
+        grad.addColorStop(0.45, `hsla(${180 + t * 26}, 92%, ${34 + high * 26}%, 0.62)`)
+        grad.addColorStop(1, 'rgba(5,10,22,0.2)')
+        ctx.fillStyle = grad
+        ctx.fillRect(0, 0, width, height)
+        for (let i = 0; i < 90; i += 1) {
+          const a = i * 0.21 + t * (0.6 + high * 1.4)
+          const r = (i / 90) * Math.min(width, height) * (0.75 + low * 0.25)
+          const x = cx + Math.cos(a) * r
+          const y = cy + Math.sin(a * 1.2) * r
+          const sz = 2 + full * 5
+          ctx.fillStyle = `hsla(${300 + i * 2 + t * 30}, 88%, ${44 + full * 28}%, 0.4)`
+          ctx.fillRect(x, y, sz, sz)
+        }
+      } else if (generatedSceneVariant === 3) {
+        const rays = 72
+        const radius = Math.hypot(width, height)
+        for (let i = 0; i < rays; i += 1) {
+          const a = (i / rays) * Math.PI * 2 + t * (0.7 + full * 1.8)
+          const len = radius * (0.35 + low * 0.7)
+          ctx.strokeStyle = `hsla(${20 + i * 4 + t * 40}, 90%, ${45 + high * 26}%, ${0.18 + full * 0.55})`
+          ctx.lineWidth = 1 + high * 5
+          ctx.beginPath()
+          ctx.moveTo(cx, cy)
+          ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len)
+          ctx.stroke()
+        }
+      } else {
+        const grid = 28
+        const cellW = width / grid
+        const cellH = height / grid
+        for (let y = 0; y < grid; y += 1) {
+          for (let x = 0; x < grid; x += 1) {
+            const p = (x + y) / (grid * 2)
+            const n = Math.sin((x * 0.7 + y * 0.9) + t * (2 + mid * 5))
+            const amp = 0.5 + 0.5 * n
+            const light = 22 + amp * (40 + high * 30)
+            ctx.fillStyle = `hsla(${150 + p * 180 + t * 18}, 80%, ${light}%, 0.7)`
+            ctx.fillRect(x * cellW, y * cellH, cellW + 1, cellH + 1)
+          }
+        }
+      }
+
+      frameId = requestAnimationFrame(draw)
+    }
+
+    frameId = requestAnimationFrame(draw)
+    return () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId)
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+  }, [generatedSceneActive, generatedSceneVariant, blackout])
+
     // PART 3: Merge energy FX with manual FX (additive, clamped).
     // Energy boosts only apply when energy system is enabled; manual slider is always the base.
     const energyGlowBoost = energySystemEnabled ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
@@ -1601,7 +1742,7 @@ export default function OutputPreview({
                 handleVideoError(layer.layerIndex, active.slotIndex, active.filePath, effectivePath, event)
               }
               style={{
-                opacity: layer.opacity * baseLayerOpacity,
+                opacity: generatedSceneActive ? 0 : layer.opacity * baseLayerOpacity,
                 mixBlendMode: blendModeToCss(layer.blendMode),
                 transform: `translate3d(var(--shake-x, 0px), var(--shake-y, 0px), 0) scale(${layer.videoMotion?.scale ?? 1})`,
                 transformOrigin: 'center center',
@@ -1609,6 +1750,14 @@ export default function OutputPreview({
             />
           )
         })}
+
+        {generatedSceneActive && (
+          <canvas
+            ref={generatedSceneCanvasRef}
+            className="kaleido-canvas"
+            style={{ opacity: '1' }}
+          />
+        )}
 
         {kaleidoActive && (
           <canvas
@@ -1618,7 +1767,7 @@ export default function OutputPreview({
           />
         )}
 
-        {activeCount === 0 && (
+        {activeCount === 0 && !generatedSceneActive && (
           <div className="fallback-screen">
             <div className="fallback-content">
               <h1>SCALEZ REACTOR</h1>

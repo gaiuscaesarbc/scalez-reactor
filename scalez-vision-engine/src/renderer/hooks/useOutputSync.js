@@ -16,6 +16,7 @@ export function buildOutputState({
   layers,
   masterFx,
   blackout,
+  sceneProgram = null,
   bassLevel = 0.2,
   spectrumLevels = null,
   bpm = 140,
@@ -31,6 +32,7 @@ export function buildOutputState({
     layers,
     masterFx,
     blackout,
+    sceneProgram,
     audio: {
       bassLevel,
       spectrumLevels: spectrumLevels || {
