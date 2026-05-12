@@ -101,10 +101,12 @@ function ClipSlot({
     <div className={classes}>
       <button
         type="button"
-        className="clip-slot__trigger"
-        onClick={() => onTrigger(layerIndex, slot.slotIndex)}
+        className={`clip-slot__trigger${isActive ? ' is-playing' : ''}${hasError ? ' is-error' : ''}${!isLoaded && !hasError ? ' is-empty' : ''}`}
+        onClick={() => onTrigger?.(layerIndex, slot.slotIndex)}
+        disabled={!onTrigger}
         title={slotTitle}
       >
+        <div className="clip-slot__activity" />
         <div className="clip-slot__num">
           {slot.slotIndex + 1}
           {isMidiFlash && <span className="clip-slot__midi-badge">MIDI</span>}

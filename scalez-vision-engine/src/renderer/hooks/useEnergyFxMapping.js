@@ -24,6 +24,11 @@ export function useEnergyFxMapping({
   const strobeCountRef = useRef(0)
   const prevFxRef = useRef({ glowBoost: 0, shakeIntensity: 0, brightnessBoost: 0, strobeCount: 0 })
   const prevSubRef = useRef(0)
+  // Keep subLevel in a ref so the main FX effect does not depend on it.
+  // subLevel changes every audio frame; including it in deps would fire the
+  // effect 20× per second and create render cascades under load.
+  const subLevelRef = useRef(subLevel)
+  useEffect(() => { subLevelRef.current = subLevel }, [subLevel])
   const STROBE_COOLDOWN_MS = 150   // beat-sync: allow up to ~6 strobes/sec
   const PEAK_STROBE_COOLDOWN_MS = 150
 
@@ -69,8 +74,9 @@ export function useEnergyFxMapping({
 
       case 'drop': {
         // Beat-sync strobe: fire on sub transient (kick hit) during drop/peak
-        const bassDelta = subLevel - prevSubRef.current
-        const isBeatHit = bassDelta > 0.04 && subLevel > 0.2
+        const subLevelNow = subLevelRef.current
+        const bassDelta = subLevelNow - prevSubRef.current
+        const isBeatHit = bassDelta > 0.04 && subLevelNow > 0.2
         const shouldStrobe = !safeMode && isBeatHit && now >= strobeCooldownRef.current
         if (shouldStrobe) {
           strobeCountRef.current += 1
@@ -87,8 +93,9 @@ export function useEnergyFxMapping({
 
       case 'peak': {
         // Beat-sync strobe on sub transient during peak
-        const bassDelta = subLevel - prevSubRef.current
-        const isBeatHit = bassDelta > 0.03 && subLevel > 0.15
+        const subLevelNow = subLevelRef.current
+        const bassDelta = subLevelNow - prevSubRef.current
+        const isBeatHit = bassDelta > 0.03 && subLevelNow > 0.15
         const shouldPeakStrobe = !safeMode && isBeatHit && now >= strobeCooldownRef.current
         if (shouldPeakStrobe) {
           strobeCountRef.current += 1
@@ -115,7 +122,7 @@ export function useEnergyFxMapping({
     }
 
     lastEnergyStateRef.current = energyState
-    prevSubRef.current = subLevel
+    prevSubRef.current = subLevelRef.current
 
     // Only call setFxValues if something actually changed to avoid render cascade
     const prev = prevFxRef.current
@@ -128,7 +135,7 @@ export function useEnergyFxMapping({
       prevFxRef.current = nextValues
       setFxValues(nextValues)
     }
-  }, [energyState, energyIntensity, enabled, safeMode, performanceMode, subLevel])
+  }, [energyState, energyIntensity, enabled, safeMode, performanceMode])
 
   return fxValues
 }

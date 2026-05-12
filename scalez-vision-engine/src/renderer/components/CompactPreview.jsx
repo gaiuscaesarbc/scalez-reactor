@@ -1,10 +1,6 @@
 import { memo, useRef, useEffect, useState } from 'react'
 import { blendModeToCss } from '../utils/blendModes'
 
-function clamp01(value) {
-  return Math.min(1, Math.max(0, value))
-}
-
 function toFileUrl(filePath) {
   if (!filePath) return ''
   if (window.scalezApi?.toMediaUrl) return window.scalezApi.toMediaUrl(filePath)
@@ -13,7 +9,7 @@ function toFileUrl(filePath) {
   return encodeURI(`file://${normalized}`)
 }
 
-function LayerVideo({ layer }) {
+function LayerVideo({ layer, liveVideoEnabled = false }) {
   const videoRef = useRef(null)
   const active =
     typeof layer.activeSlotIndex === 'number' && layer.slots?.[layer.activeSlotIndex]
@@ -23,6 +19,9 @@ function LayerVideo({ layer }) {
   const src = filePath ? toFileUrl(filePath) : ''
 
   useEffect(() => {
+    if (!liveVideoEnabled) {
+      return
+    }
     const video = videoRef.current
     if (!video) return
     if (!src) {
@@ -36,7 +35,7 @@ function LayerVideo({ layer }) {
       video.load()
     }
     video.play().catch(() => {})
-  }, [src])
+  }, [src, liveVideoEnabled])
 
   return (
     <div
@@ -44,14 +43,21 @@ function LayerVideo({ layer }) {
       style={{ opacity: layer.opacity ?? 1, mixBlendMode: blendModeToCss(layer.blendMode || 'normal') }}
     >
       {src ? (
-        <video
-          ref={videoRef}
-          className="compact-preview__video"
-          muted
-          loop
-          playsInline
-          autoPlay
-        />
+        liveVideoEnabled ? (
+          <video
+            ref={videoRef}
+            className="compact-preview__video"
+            muted
+            loop
+            playsInline
+            autoPlay
+          />
+        ) : (
+          <div className="compact-preview__layer-empty">
+            <span className="compact-preview__layer-label">{layer.label}</span>
+            <span>Loaded</span>
+          </div>
+        )
       ) : (
         <div className="compact-preview__layer-empty">
           <span className="compact-preview__layer-label">{layer.label}</span>
@@ -71,6 +77,7 @@ export default memo(function CompactPreview({
   energySystemEnabled = false,
   energyState = 'calm',
   blackout = false,
+  liveVideoEnabled = false,
 }) {
   const previewRef = useRef(null)
   const [strobeFlash, setStrobeFlash] = useState(0)
@@ -116,26 +123,19 @@ export default memo(function CompactPreview({
     }
   }, [masterFx?.shake, smoothedEnergyFx?.shakeIntensity, smoothedDropFx?.shakeIntensity, energySystemEnabled])
 
-  const finalGlow = clamp01(
-    (masterFx?.glow ?? 0) +
-      (energySystemEnabled ? (smoothedEnergyFx?.glowBoost ?? 0) : 0) +
-      (smoothedDropFx?.glowBoost ?? 0),
-  )
   const finalBrightness = Math.max(
     0.1,
     (masterFx?.brightness ?? 1) +
       (energySystemEnabled ? (smoothedEnergyFx?.brightnessBoost ?? 0) : 0) +
       (smoothedDropFx?.brightnessBoost ?? 0),
   )
-  const glowFilter = finalGlow > 0
-    ? `brightness(${finalBrightness}) drop-shadow(0 0 ${Math.pow(finalGlow, 0.8) * 12}px rgba(100,200,255,${finalGlow * 0.6}))`
-    : `brightness(${finalBrightness})`
+  const previewFilter = `brightness(${finalBrightness})`
 
   return (
     <div
       ref={previewRef}
       className="compact-preview"
-      style={{ '--shake-x': '0px', '--shake-y': '0px', filter: glowFilter }}
+      style={{ '--shake-x': '0px', '--shake-y': '0px', filter: previewFilter }}
     >
       {blackout ? (
         <div className="compact-preview__blackout">BLACKOUT</div>
@@ -143,7 +143,7 @@ export default memo(function CompactPreview({
         <>
           <div className="compact-preview__layers">
             {layers.map((layer, idx) => (
-              <LayerVideo key={idx} layer={layer} />
+              <LayerVideo key={idx} layer={layer} liveVideoEnabled={liveVideoEnabled} />
             ))}
           </div>
 

@@ -3,10 +3,15 @@ import { BLEND_MODES } from '../utils/blendModes'
 import ClipSlot from './ClipSlot'
 import BandPicker from './BandPicker'
 import QuickLaunchPad from './QuickLaunchPad'
+import { GeneratedClipBrowser } from './GeneratedClipBrowser'
 
 
 export default memo(function LayerStrip({
   layer,
+  performanceMode = false,
+  isSceneSelectMode = false,
+  sceneClipSelectedSlot = null,
+  onSceneClipSelectSlot = null,
   isFocused,
   spectrumRef,
   cueMode,
@@ -27,11 +32,16 @@ export default memo(function LayerStrip({
   onAudioLinkChange,
   onVideoMotionChange,
   onRebuildReverseCache,
+  onLoadGeneratedClip,
+  onLoadGeneratedPackToLayer,
+  onLoadGeneratedPackToAllLayers,
+  layers,
 }) {
   const scrollContainerRef = useRef(null)
   const [showAudioLink, setShowAudioLink] = useState(false)
   const [showVideoMotion, setShowVideoMotion] = useState(false)
   const [isRebuildingReverse, setIsRebuildingReverse] = useState(false)
+  const [showGeneratedBrowser, setShowGeneratedBrowser] = useState(false)
   const activeClip =
     typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
   const cuedClip =
@@ -44,12 +54,28 @@ export default memo(function LayerStrip({
     }
   }, [layer.layerIndex, onScrollRef])
 
+  // Handle mouse wheel horizontal scrolling
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current
+    if (!scrollContainer) return
+
+    const handleWheel = (e) => {
+      e.preventDefault()
+      scrollContainer.scrollLeft += e.deltaX || e.deltaY
+    }
+
+    scrollContainer.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      scrollContainer.removeEventListener('wheel', handleWheel)
+    }
+  }, [])
+
   return (
     <section
       className={`layer-strip${isFocused ? ' layer-strip--focused' : ''}`}
       data-layer={layer.label}
     >
-      <div className="layer-controls">
+      <div className={`layer-controls${activeClip ? ' is-active' : ''}`}>
         <div className="layer-controls__title-row">
           <div className="layer-controls__title">{layer.label}</div>
           <button
@@ -97,6 +123,7 @@ export default memo(function LayerStrip({
           </select>
         </label>
 
+        {!performanceMode && (
         <div className="audio-reactivity-block">
           <button
             type="button"
@@ -168,7 +195,9 @@ export default memo(function LayerStrip({
             </>
           )}
         </div>
+        )}
 
+        {!performanceMode && (
         <div className="video-motion-block">
           <button
             type="button"
@@ -295,6 +324,21 @@ export default memo(function LayerStrip({
                     onVideoMotionChange?.(
                       layer.layerIndex,
                       'bounceEnabled',
+                      event.target.checked,
+                    )
+                  }
+                />
+              </label>
+
+              <label className="toggle-line">
+                <span>Shake Target</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(videoMotion.shakeEnabled ?? true)}
+                  onChange={(event) =>
+                    onVideoMotionChange?.(
+                      layer.layerIndex,
+                      'shakeEnabled',
                       event.target.checked,
                     )
                   }
@@ -446,6 +490,18 @@ export default memo(function LayerStrip({
             </>
           )}
         </div>
+        )}
+
+        {!performanceMode && (
+          <button
+            type="button"
+            className="generated-clips-btn"
+            onClick={() => setShowGeneratedBrowser(true)}
+            title="Open generated clips library"
+          >
+            ✨ Generated Clips
+          </button>
+        )}
 
         <button type="button" className="clear-btn" onClick={() => onClear(layer.layerIndex)}>
           Clear
@@ -480,24 +536,53 @@ export default memo(function LayerStrip({
           data-scroll-layer={layer.layerIndex}
         >
           <div className="clip-grid" role="list" aria-label={`${layer.label} clip slots`}>
-            {layer.slots.map((slot) => (
-              <ClipSlot
-                key={`${layer.layerIndex}-${slot.slotIndex}`}
-                layerIndex={layer.layerIndex}
-                slot={slot}
-                isActive={layer.activeSlotIndex === slot.slotIndex}
-                isMidiFlash={midiFlashSlots?.has(`${layer.layerIndex}-${slot.slotIndex}`) ?? false}
-                isCued={cueMode && cuedSlotIndex === slot.slotIndex}
-                cueMode={cueMode}
-                onTrigger={onTrigger}
-                onLoad={onLoad}
-                onDelete={onDelete}
-              />
-            ))}
+            {layer.slots.map((slot) => {
+              const isSelected = isSceneSelectMode &&
+                sceneClipSelectedSlot?.layerIndex === layer.layerIndex &&
+                sceneClipSelectedSlot?.slotIndex === slot.slotIndex
+              return (
+                <div
+                  key={`${layer.layerIndex}-${slot.slotIndex}`}
+                  className={`clip-slot-wrapper${isSelected ? ' is-selected' : ''}`}
+                  onClick={() => {
+                    if (isSceneSelectMode && onSceneClipSelectSlot) {
+                      onSceneClipSelectSlot({
+                        layerIndex: layer.layerIndex,
+                        slotIndex: slot.slotIndex,
+                        slot,
+                      })
+                    }
+                  }}
+                >
+                  <ClipSlot
+                    layerIndex={layer.layerIndex}
+                    slot={slot}
+                    isActive={layer.activeSlotIndex === slot.slotIndex}
+                    isMidiFlash={midiFlashSlots?.has(`${layer.layerIndex}-${slot.slotIndex}`) ?? false}
+                    isCued={cueMode && cuedSlotIndex === slot.slotIndex}
+                    cueMode={cueMode}
+                    onTrigger={isSceneSelectMode ? undefined : onTrigger}
+                    onLoad={onLoad}
+                    onDelete={onDelete}
+                  />
+                </div>
+              )
+            })}
           </div>
         </div>
         <QuickLaunchPad layer={layer} onTrigger={onTrigger} />
       </div>
+
+      <GeneratedClipBrowser
+        isOpen={showGeneratedBrowser}
+        onClose={() => setShowGeneratedBrowser(false)}
+        layerIndex={layer.layerIndex}
+        activeSlotIndex={layer.activeSlotIndex}
+        layers={layers}
+        onAssignClip={onLoadGeneratedClip}
+        onLoadPackToLayer={onLoadGeneratedPackToLayer}
+        onLoadPackToAllLayers={onLoadGeneratedPackToAllLayers}
+      />
     </section>
   )
 })

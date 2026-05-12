@@ -44,7 +44,6 @@ export default function MidiPanel({ midiState, onMapCommand }) {
     { id: 'layer-2-clear', label: 'Clear Layer 2', type: 'button' },
     { id: 'layer-3-clear', label: 'Clear Layer 3', type: 'button' },
     { id: 'focused-layer-clear', label: 'Clear Focused Layer', type: 'button' },
-    { id: 'glow', label: 'Glow', type: 'knob' },
     { id: 'strobe', label: 'Strobe', type: 'knob' },
     { id: 'shake', label: 'Shake', type: 'knob' },
     { id: 'brightness', label: 'Brightness', type: 'knob' },
@@ -57,7 +56,6 @@ export default function MidiPanel({ midiState, onMapCommand }) {
 
   const handleLearnClick = async (action) => {
     setLearningLabel(action.label)
-    stopLearn()
 
     try {
       const result = await startLearn(action.type, action.id)
@@ -72,7 +70,7 @@ export default function MidiPanel({ midiState, onMapCommand }) {
       stopLearn()
       setLearningLabel('')
     } catch (err) {
-      console.error('Learn failed:', err)
+      console.error('[MidiPanel] Learn failed:', err)
       stopLearn()
       setLearningLabel('')
     }
@@ -82,7 +80,6 @@ export default function MidiPanel({ midiState, onMapCommand }) {
     const actionId = `clip-slot`
     const label = `L${slotLearnLayer + 1} Slot ${slotLearnSlot + 1}`
     setLearningLabel(label)
-    stopLearn()
 
     try {
       const result = await startLearn('button', actionId)
@@ -98,7 +95,7 @@ export default function MidiPanel({ midiState, onMapCommand }) {
       stopLearn()
       setLearningLabel('')
     } catch (err) {
-      console.error('Slot learn failed:', err)
+      console.error('[MidiPanel] Slot learn failed:', err)
       stopLearn()
       setLearningLabel('')
     }

@@ -5,7 +5,6 @@ function clamp(value, min = 0, max = 1) {
 }
 
 const METERS = [
-  { key: 'glow',       label: 'GLOW',   color: '#4ab4ff', max: 1.5 },
   { key: 'brightness', label: 'BRIGHT', color: '#ffe066', max: 1.5 },
   { key: 'shake',      label: 'SHAKE',  color: '#ff6666', max: 1.0 },
   { key: 'strobe',     label: 'STROBE', color: '#dd66ff', max: 1.0 },
@@ -139,10 +138,7 @@ export default memo(function LiveFxMeters({
           energyBoost = energyStrobePulse
           dropBoost = dropStrobePulse
         } else if (energySystemEnabled) {
-          if (key === 'glow') {
-            energyBoost = smoothedEnergyFx?.glowBoost ?? 0
-            dropBoost = smoothedDropFx?.glowBoost ?? 0
-          } else if (key === 'shake') {
+          if (key === 'shake') {
             energyBoost = smoothedEnergyFx?.shakeIntensity ?? 0
             dropBoost = smoothedDropFx?.shakeIntensity ?? 0
           } else if (key === 'brightness') {

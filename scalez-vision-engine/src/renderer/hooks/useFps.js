@@ -3,8 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 export function useFps() {
   const [fps, setFps] = useState(0)
   const frameCountRef = useRef(0)
-  const lastSampleRef = useRef(performance.now())
+  const lastSampleRef = useRef(0)
   const smoothedFpsRef = useRef(60)
+
+  useEffect(() => {
+    lastSampleRef.current = performance.now()
+  }, [])
 
   useEffect(() => {
     let frameHandle = null

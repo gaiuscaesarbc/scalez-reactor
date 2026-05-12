@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { blendModeToCss } from '../utils/blendModes'
 import AudioMeter from './AudioMeter'
+import { GeneratedClipRenderer } from '../generatedClips/GeneratedClipRenderer'
+import OutputPresetPanel from './OutputPresetPanel'
 
 function clamp01(value) {
   return Math.min(1, Math.max(0, value))
@@ -142,10 +144,18 @@ function getBounceClipKey(filePath) {
   return filePath || '__empty__'
 }
 
-function tryResumeVideo(video) {
+const resumeAttemptAtRef = new WeakMap()
+
+function tryResumeVideo(video, minIntervalMs = 500) {
   if (!video || !video.paused) {
+    return  // PHASE 2: Early return if not paused (avoid reflexive play calls)
+  }
+  const now = performance.now()
+  const lastAttemptAt = resumeAttemptAtRef.get(video) || 0
+  if (now - lastAttemptAt < minIntervalMs) {
     return
   }
+  resumeAttemptAtRef.set(video, now)
   const playPromise = video.play?.()
   if (playPromise && typeof playPromise.catch === 'function') {
     playPromise.catch(() => {
@@ -163,6 +173,10 @@ function setSafePlaybackRate(video, rate) {
   }
 
   const safeRate = Math.max(MIN_SUPPORTED_PLAYBACK_RATE, Math.min(MAX_SUPPORTED_PLAYBACK_RATE, rate))
+  // PHASE 2: Increase threshold to avoid micro-adjustments (was 0.015)
+  if (Number.isFinite(video.playbackRate) && Math.abs(video.playbackRate - safeRate) < 0.025) {
+    return  // Skip write if change is insignificant
+  }
   try {
     video.playbackRate = safeRate
   } catch {
@@ -186,6 +200,59 @@ const BOUNCE_REVERSE_COOLDOWN_MS = 30000
 const BOUNCE_FORWARD_RETRY_RESET_MS = 15000
 const BOUNCE_BROWSER_EPSILON_SECONDS = 0.09
 const BOUNCE_SWITCH_COOLDOWN_MS = 120
+const ASPECT_PANEL_HIDE_DELAY_MS = 2800
+const BOUNCE_WATCHDOG_RESUME_COOLDOWN_MS = 350
+
+// ============================================================
+// PHASE 1 WATCHDOG TUNING: Reduce decoder churn
+// Goal: Tolerate longer stalls with fewer interventions
+// instead of aggressive ~1.5s recovery cycle
+// ============================================================
+const STALL_WATCHDOG_INTERVAL_MS = 500 // was 250: check less frequently
+const STALL_DETECT_MS = 2000
+const STALL_DETECT_MULTILAYER_MS = 2500 // was 1400: tolerate longer stalls
+const STALL_RECOVERY_COOLDOWN_MS = 7000
+const STALL_RECOVERY_COOLDOWN_MULTILAYER_MS = 2000 // was 800: space out recovery attempts further
+const STALL_MAX_NUDGE_ATTEMPTS = 1
+const STALL_HARD_RESET_COOLDOWN_MS = 20000
+const STALL_PROGRESS_GRACE_MS = 1800
+const STALL_SUCCESS_RESET_MS = 12000
+const STALL_FAIL_AFTER_ATTEMPTS = 4
+const STALL_MULTILAYER_MICRO_SEEK_MS = 3000 // was 1400: allow longer before seeking
+const STALL_MULTILAYER_MAX_SEEK_BURST = 2
+const STALL_MULTILAYER_SEEK_COOLDOWN_MS = 9000
+const STALL_PAUSE_PLAY_COOLDOWN_MS = 900
+const STALL_SINGLE_LAYER_PAUSE_PLAY_ATTEMPTS = 2
+const STALL_SINGLE_LAYER_LOW_RATE_SKIP = 0.08
+const pausePlayAttemptAtRef = new WeakMap()
+
+function tryPausePlayNudge(video, minIntervalMs = STALL_PAUSE_PLAY_COOLDOWN_MS) {
+  if (!video) {
+    return false
+  }
+  const now = performance.now()
+  const lastAttemptAt = pausePlayAttemptAtRef.get(video) || 0
+  if (now - lastAttemptAt < minIntervalMs) {
+    return false
+  }
+  pausePlayAttemptAtRef.set(video, now)
+
+  try {
+    if (!video.paused) {
+      video.pause()
+    }
+  } catch {
+    // ignore pause races
+  }
+
+  const playPromise = video.play?.()
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(() => {
+      // Ignore play races while source/seek is being updated.
+    })
+  }
+  return true
+}
 
 function isMediaDebugEnabled() {
   if (!import.meta.env.DEV) {
@@ -219,7 +286,7 @@ function isBenignSourceResetError(event) {
 
 const MEDIA_DEBUG = isMediaDebugEnabled()
 
-export default function OutputPreview({
+function OutputPreview({
   layers,
   fps,
   bassLevel,
@@ -239,13 +306,12 @@ export default function OutputPreview({
   energySystemEnabled = false,
   smoothedDropFx = {},
   dropStrobeCount = 0,
-  sceneProgram = null,
+  generatedQualityMode = 'safe',
+  generatedMaxFps = 45,
+  performanceOutputMode = false,
 }) {
+  const previewWrapRef = useRef(null)
   const previewRef = useRef(null)
-  const generatedSceneCanvasRef = useRef(null)
-  const kaleidoCanvasRef = useRef(null)
-  const kaleidoSourceCanvasRef = useRef(null)
-  const kaleidoSampleCanvasRef = useRef(null)
   const videoRefsRef = useRef({})
   const preloadedRefsRef = useRef({})
   const srcLogRef = useRef({})
@@ -253,6 +319,10 @@ export default function OutputPreview({
   const [bounceRenderVersion, setBounceRenderVersion] = useState(0)
   const [strobeFlash, setStrobeFlash] = useState({ key: 0, opacity: 0 })
   const [perfStats, setPerfStats] = useState({ cpuPercent: 0, gpuPercent: 0 })
+  const [videoRemountVersion, setVideoRemountVersion] = useState({})
+  const [activePreset, setActivePreset] = useState('16-9')
+  const [isAspectPanelVisible, setIsAspectPanelVisible] = useState(true)
+  const [isPreviewPointerInside, setIsPreviewPointerInside] = useState(false)
   const playAttemptRef = useRef({})
   const playRejectLogRef = useRef({})
   const successfulCanPlayRef = useRef({})
@@ -261,6 +331,74 @@ export default function OutputPreview({
   const energyStrobeTimeoutRef = useRef(null)
   const dropStrobeTimeoutRef = useRef(null)
   const lastStrobeLevelRef = useRef(0)
+  const aspectPanelHideTimerRef = useRef(null)
+  const isOutputWindowRef = useRef(false)
+  const outputTelemetryRef = useRef({
+    totalStallDetections: 0,
+    totalSoftRecoveries: 0,
+    lastRecoveryAt: 0,
+    lastStallAt: 0,
+    health: 'Healthy',
+    lastPublishedAt: 0,
+  })
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    isOutputWindowRef.current = params.get('window') === 'output'
+  }, [])
+
+  const publishOutputTelemetry = useCallback((force = false) => {
+    if (!isOutputWindowRef.current) {
+      return
+    }
+
+    const now = Date.now()
+    const telemetry = outputTelemetryRef.current
+    const recentlyRecovered = now - (telemetry.lastRecoveryAt || 0) <= 9000
+    const recentlyStalled = now - (telemetry.lastStallAt || 0) <= 20000
+    const health = recentlyRecovered
+      ? 'Recovering'
+      : recentlyStalled
+        ? 'Warning'
+        : 'Healthy'
+
+    const shouldPublish = force || now - telemetry.lastPublishedAt >= 1000 || health !== telemetry.health
+    if (!shouldPublish) {
+      return
+    }
+
+    telemetry.health = health
+    telemetry.lastPublishedAt = now
+
+    window.scalezApi?.publishOutputTelemetry?.({
+      totalStallDetections: telemetry.totalStallDetections,
+      totalSoftRecoveries: telemetry.totalSoftRecoveries,
+      lastRecoveryAt: telemetry.lastRecoveryAt,
+      health: telemetry.health,
+    })
+  }, [])
+
+  const clearAspectPanelHideTimer = useCallback(() => {
+    if (aspectPanelHideTimerRef.current) {
+      clearTimeout(aspectPanelHideTimerRef.current)
+      aspectPanelHideTimerRef.current = null
+    }
+  }, [])
+
+  const revealAspectPanel = useCallback(() => {
+    setIsAspectPanelVisible(true)
+  }, [])
+
+  const scheduleAspectPanelHide = useCallback(() => {
+    clearAspectPanelHideTimer()
+    if (isPreviewPointerInside) {
+      return
+    }
+    aspectPanelHideTimerRef.current = setTimeout(() => {
+      setIsAspectPanelVisible(false)
+      aspectPanelHideTimerRef.current = null
+    }, ASPECT_PANEL_HIDE_DELAY_MS)
+  }, [clearAspectPanelHideTimer, isPreviewPointerInside])
 
   const refreshBounceRender = () => {
     setBounceRenderVersion((version) => version + 1)
@@ -287,6 +425,10 @@ export default function OutputPreview({
   const lastTimelineTriggerRef = useRef({})
   const timelineDynamicsRef = useRef({})
   const timelineLinkDynamicsRef = useRef({})
+  const lastTimelineApplyAtRef = useRef({})
+  const stallWatchRef = useRef({})
+  const stallRecoveryStatsRef = useRef({})
+  const stallSeekGuardRef = useRef({})
   const activeClipKeyRef = useRef({})
   const bouncePhaseRef = useRef({})
   const reverseClipPathRef = useRef({})
@@ -296,28 +438,18 @@ export default function OutputPreview({
   const forwardRecoverLastAtRef = useRef({})
   const lastBounceSwitchAtRef = useRef({})
   const reverseCooldownUntilRef = useRef({})
+    const lastBounceResumeAtRef = useRef({})
   const lastBounceEnabledRef = useRef({})
   const latestLayersRef = useRef(layers)
   const latestBassRef = useRef(bassLevel)
   const latestSpectrumRef = useRef(spectrumLevels)
-  const kaleidoParamsRef = useRef({
-    active: false,
-    intensity: 0,
-    segments: 8,
-    spinDegPerSec: 0,
-    zoom: 1,
-    offsetPct: 0,
-    coreSizePct: 18,
-  })
-  const [syncStatus, setSyncStatus] = useState('synced')
+  const bpmRef = useRef(bpm)
+  const shakeAmountRef = useRef(0)
+  const lastShakeFrameAtRef = useRef(0)
+  const lastShakeOffsetRef = useRef({})
+    const latestActiveCountRef = useRef(0)
+  const syncStatus = 'synced'
   const [videoErrors, setVideoErrors] = useState({})
-  const kaleidoExclusive = clamp01(masterFx?.kaleido ?? 0) > 0.01
-  const generatedSceneActive = typeof sceneProgram === 'string' && sceneProgram.length > 0
-  const generatedSceneVariant = useMemo(
-    () => Array.from(sceneProgram || '').reduce((acc, char, index) => acc + char.charCodeAt(0) * (index + 1), 0) % 5,
-    [sceneProgram],
-  )
-
   const bounceClipRequestKey = useMemo(
     () => layers
       .map((layer) => {
@@ -329,11 +461,6 @@ export default function OutputPreview({
       .join('|'),
     [layers],
   )
-
-  // Monitor sync status
-  useEffect(() => {
-    setSyncStatus('synced')
-  }, [layers])
 
   useEffect(() => {
     let disposed = false
@@ -366,7 +493,28 @@ export default function OutputPreview({
     latestLayersRef.current = layers
     latestBassRef.current = bassLevel
     latestSpectrumRef.current = spectrumLevels
-  }, [layers, bassLevel, spectrumLevels])
+    bpmRef.current = bpm
+  }, [layers, bassLevel, spectrumLevels, bpm])
+
+  useEffect(() => {
+    if (isPreviewPointerInside) {
+      clearAspectPanelHideTimer()
+      return
+    }
+    if (!isAspectPanelVisible) {
+      return
+    }
+    scheduleAspectPanelHide()
+  }, [
+    clearAspectPanelHideTimer,
+    isAspectPanelVisible,
+    isPreviewPointerInside,
+    scheduleAspectPanelHide,
+  ])
+
+  useEffect(() => () => {
+    clearAspectPanelHideTimer()
+  }, [clearAspectPanelHideTimer])
 
   useEffect(() => {
     const nextLevel = blackout ? 0 : Math.min(0.52, Math.pow(masterFx.strobe, 1.35) * 0.58)
@@ -457,47 +605,157 @@ export default function OutputPreview({
   }, [dropStrobeCount, blackout])
 
   useEffect(() => {
-    const previewEl = previewRef.current
+    const energyShakeBoost = energySystemEnabled ? (smoothedEnergyFx?.shakeIntensity ?? 0) : 0
+    const dropShakeBoost = smoothedDropFx?.shakeIntensity ?? 0
+    const manualShake = Math.max(0, Math.min(1.0, Number(masterFx?.shake ?? 0)))
+    const activeLayers = latestActiveCountRef.current
+
+    // Hard safety: with multi-layer energy playback, disable reactive shake contribution
+    // and disable shake entirely to prevent renderer stalls.
+    if (energySystemEnabled && activeLayers >= 2) {
+      shakeAmountRef.current = 0
+      return
+    }
+
+    shakeAmountRef.current = Math.max(0, Math.min(1.0, manualShake + energyShakeBoost + dropShakeBoost))
+  }, [masterFx?.shake, smoothedEnergyFx?.shakeIntensity, smoothedDropFx?.shakeIntensity, energySystemEnabled, layers])
+
+  useEffect(() => {
+    const previewEl = previewWrapRef.current || previewRef.current
     if (!previewEl) {
       return undefined
     }
 
     let frameId = null
-    // PART 3: Merge energy shake with manual shake
-    const energyShakeBoost = energySystemEnabled ? (smoothedEnergyFx?.shakeIntensity ?? 0) : 0
-    const dropShakeBoost = smoothedDropFx?.shakeIntensity ?? 0
-    const shakeAmount = kaleidoExclusive
-      ? 0
-      : Math.max(0, Math.min(1.0, Number(masterFx?.shake ?? 0) + energyShakeBoost + dropShakeBoost))
-
-    if (shakeAmount <= 0.08) {
-      previewEl.style.setProperty('--shake-x', '0px')
-      previewEl.style.setProperty('--shake-y', '0px')
-      return undefined
-    }
-
-    const amplitude = shakeAmount * 5.5
-    const tick = (timestamp) => {
-      const t = timestamp / 1000
-      const offsetX = (Math.sin(t * 38) + Math.sin(t * 61 + 0.8) * 0.45) * amplitude * 0.72
-      const offsetY = (Math.cos(t * 33 + 0.4) + Math.sin(t * 57 + 1.7) * 0.4) * amplitude * 0.68
-      previewEl.style.setProperty('--shake-x', `${offsetX.toFixed(2)}px`)
-      previewEl.style.setProperty('--shake-y', `${offsetY.toFixed(2)}px`)
+    let idleTimerId = null
+    const scheduleNextTick = (delayMs = 0) => {
+      if (delayMs > 0) {
+        if (idleTimerId !== null) {
+          clearTimeout(idleTimerId)
+        }
+        idleTimerId = setTimeout(() => {
+          idleTimerId = null
+          frameId = requestAnimationFrame(tick)
+        }, delayMs)
+        return
+      }
       frameId = requestAnimationFrame(tick)
     }
 
-    frameId = requestAnimationFrame(tick)
+    const tick = (timestamp) => {
+      const activeLayers = latestActiveCountRef.current
+      const minFrameIntervalMs = activeLayers >= 3 ? 50 : activeLayers >= 2 ? 33 : 16
+      if (timestamp - lastShakeFrameAtRef.current < minFrameIntervalMs) {
+        scheduleNextTick()
+        return
+      }
+      lastShakeFrameAtRef.current = timestamp
+
+      let shakeAmount = shakeAmountRef.current
+      if (activeLayers >= 3) {
+        shakeAmount = Math.min(shakeAmount, 0.2)
+      } else if (activeLayers >= 2) {
+        shakeAmount = Math.min(shakeAmount, 0.3)
+      }
+
+      if (shakeAmount <= 0.08) {
+        const layerOffsets = lastShakeOffsetRef.current
+        Object.entries(layerOffsets).forEach(([layerIndex, prev]) => {
+          if (prev?.active) {
+            previewEl.style.setProperty(`--shake-x-${layerIndex}`, '0px')
+            previewEl.style.setProperty(`--shake-y-${layerIndex}`, '0px')
+            layerOffsets[layerIndex] = { x: 0, y: 0, active: false }
+          }
+        })
+        // Idle at low rate until shake becomes active again.
+        scheduleNextTick(120)
+        return
+      }
+
+      const currentLayers = latestLayersRef.current || []
+      const targetLayerIndices = currentLayers
+        .filter((layer) => {
+          if (!layer.visible || typeof layer.activeSlotIndex !== 'number') {
+            return false
+          }
+          return Boolean(layer.videoMotion?.shakeEnabled ?? true)
+        })
+        .map((layer) => layer.layerIndex)
+
+      if (targetLayerIndices.length === 0) {
+        const layerOffsets = lastShakeOffsetRef.current
+        Object.entries(layerOffsets).forEach(([layerIndex, prev]) => {
+          if (prev?.active) {
+            previewEl.style.setProperty(`--shake-x-${layerIndex}`, '0px')
+            previewEl.style.setProperty(`--shake-y-${layerIndex}`, '0px')
+            layerOffsets[layerIndex] = { x: 0, y: 0, active: false }
+          }
+        })
+        scheduleNextTick(120)
+        return
+      }
+
+      const amplitude = shakeAmount * 5.5
+      const t = timestamp / 1000
+      const layerOffsets = lastShakeOffsetRef.current
+      const targetSet = new Set(targetLayerIndices)
+
+      Object.entries(layerOffsets).forEach(([layerIndex, prev]) => {
+        if (prev?.active && !targetSet.has(Number(layerIndex))) {
+          previewEl.style.setProperty(`--shake-x-${layerIndex}`, '0px')
+          previewEl.style.setProperty(`--shake-y-${layerIndex}`, '0px')
+          layerOffsets[layerIndex] = { x: 0, y: 0, active: false }
+        }
+      })
+
+      targetLayerIndices.forEach((layerIndex) => {
+        const phase = layerIndex * 0.71
+        const offsetX = (Math.sin(t * 38 + phase) + Math.sin(t * 61 + 0.8 + phase * 0.6) * 0.45) * amplitude * 0.72
+        const offsetY = (Math.cos(t * 33 + 0.4 + phase * 0.9) + Math.sin(t * 57 + 1.7 + phase) * 0.4) * amplitude * 0.68
+        const prev = layerOffsets[layerIndex] || { x: 0, y: 0, active: false }
+        if (Math.abs(offsetX - prev.x) >= 0.15 || Math.abs(offsetY - prev.y) >= 0.15 || !prev.active) {
+          previewEl.style.setProperty(`--shake-x-${layerIndex}`, `${offsetX.toFixed(2)}px`)
+          previewEl.style.setProperty(`--shake-y-${layerIndex}`, `${offsetY.toFixed(2)}px`)
+          layerOffsets[layerIndex] = { x: offsetX, y: offsetY, active: true }
+        }
+      })
+
+      scheduleNextTick()
+    }
+
+    scheduleNextTick(120)
     return () => {
       if (frameId !== null) {
         cancelAnimationFrame(frameId)
       }
-      previewEl.style.setProperty('--shake-x', '0px')
-      previewEl.style.setProperty('--shake-y', '0px')
+      if (idleTimerId !== null) {
+        clearTimeout(idleTimerId)
+      }
+      const layerOffsets = lastShakeOffsetRef.current
+      Object.keys(layerOffsets).forEach((layerIndex) => {
+        previewEl.style.setProperty(`--shake-x-${layerIndex}`, '0px')
+        previewEl.style.setProperty(`--shake-y-${layerIndex}`, '0px')
+      })
+      lastShakeOffsetRef.current = {}
     }
-  }, [masterFx?.shake, smoothedEnergyFx?.shakeIntensity, smoothedDropFx?.shakeIntensity, kaleidoExclusive])
+  }, [])
 
   // Apply per-layer timeline range and audio-reactive playback motion.
+  // Runs on a 50ms interval reading from refs so React audio-frame prop changes
+  // (bassLevel / spectrumLevels) no longer trigger this as a React effect — preventing
+  // the 20fps decoder-interference that caused multi-layer clip stalls.
   useEffect(() => {
+    const tick = () => {
+    const layers = latestLayersRef.current || []
+    const bassLevel = latestBassRef.current
+    const spectrumLevels = latestSpectrumRef.current
+    const bpm = bpmRef.current
+    const now = performance.now()
+    const activeLayerCount = layers.reduce(
+      (count, layer) => (typeof layer.activeSlotIndex === 'number' ? count + 1 : count),
+      0,
+    )
+    const multiLayerSafety = activeLayerCount >= 2
     layers.forEach((layer) => {
       const video = videoRefsRef.current[layer.layerIndex]
       if (!video || Number.isNaN(video.duration) || !Number.isFinite(video.duration) || video.duration <= 0) {
@@ -514,7 +772,7 @@ export default function OutputPreview({
       const activeSlot = typeof layer.activeSlotIndex === 'number' ? layer.activeSlotIndex : -1
       const activeSlotObj = activeSlot >= 0 ? layer.slots?.[activeSlot] : null
       const clipKey = activeSlotObj?.filePath || `${layer.layerIndex}-none`
-      const bounceEnabled = Boolean(motion.bounceEnabled)
+      const bounceEnabled = !multiLayerSafety && Boolean(motion.bounceEnabled)
       const prevBounceEnabled = Boolean(lastBounceEnabledRef.current[layer.layerIndex])
       if (prevBounceEnabled !== bounceEnabled) {
         // Reset phase tracking, but do not force a rewind on toggle.
@@ -534,12 +792,47 @@ export default function OutputPreview({
         lastTimelineTriggerRef.current[layer.layerIndex] = false
         bouncePhaseRef.current[layer.layerIndex] = 'forward'
         lastBounceEnabledRef.current[layer.layerIndex] = bounceEnabled
+        lastTimelineApplyAtRef.current[layer.layerIndex] = 0
+        Object.keys(stallRecoveryStatsRef.current).forEach((key) => {
+          if (key.startsWith(`${layer.layerIndex}-`)) {
+            delete stallRecoveryStatsRef.current[key]
+          }
+        })
+        Object.keys(stallSeekGuardRef.current).forEach((key) => {
+          if (key.startsWith(`${layer.layerIndex}-`)) {
+            delete stallSeekGuardRef.current[key]
+          }
+        })
         Object.keys(bounceCanPlaySeekRef.current).forEach((key) => {
           if (key.startsWith(`${layer.layerIndex}-`)) {
             delete bounceCanPlaySeekRef.current[key]
           }
         })
         video.currentTime = segmentStart
+      }
+
+      const lastAppliedAt = lastTimelineApplyAtRef.current[layer.layerIndex] || 0
+      const minApplyIntervalMs = multiLayerSafety ? 120 : 34
+      if (now - lastAppliedAt < minApplyIntervalMs) {
+        return
+      }
+      lastTimelineApplyAtRef.current[layer.layerIndex] = now
+
+      if (multiLayerSafety) {
+        // Ultra-safe multi-layer mode: leave the decoder completely alone.
+        // Any unnecessary API call (playbackRate set, play()) on a hardware-decoded
+        // stream under GPU pressure can cause the decoder to stall. Only resume
+        // if the video has genuinely paused (e.g. after OS preemption).
+        lastTimelineTriggerRef.current[layer.layerIndex] = false
+        // Normalize to 1x if this layer entered multi-layer mode after running a
+        // reactive timeline speed in single-layer mode.
+        if (Number.isFinite(video.playbackRate) && Math.abs(video.playbackRate - 1) > 0.05) {
+          setSafePlaybackRate(video, 1)
+        }
+        if (video.paused) {
+          tryResumeVideo(video)
+        }
+        return
       }
 
       if (bounceEnabled) {
@@ -556,6 +849,9 @@ export default function OutputPreview({
         video.currentTime = segmentStart
       }
 
+      const bpmValue = Number.isFinite(bpm) ? bpm : 140
+      const tempoScale = Math.max(0.25, Math.min(2.5, bpmValue / 140))
+
       const speedLevel = getSpectrumSourceLevel(spectrumLevels, motion.speedSource || 'low', bassLevel)
       const speedBoost = getReactiveAmount(
         speedLevel,
@@ -567,9 +863,6 @@ export default function OutputPreview({
       // Tempo-sync playback: 140 BPM is the 1.0x baseline.
       // Set the app BPM to your music's BPM via tap tempo or manual input
       // and all clips will scale proportionally.
-      const bpmValue = Number.isFinite(bpm) ? bpm : 140
-      const tempoScale = Math.max(0.25, Math.min(2.5, bpmValue / 140))
-
       // Baseline playback rate. Timeline speed controls below are allowed to override
       // this in both normal and bounce modes.
       const baselinePlaybackRate = bounceEnabled
@@ -604,8 +897,11 @@ export default function OutputPreview({
         const linkedTimelineSpeed = clamp01(smoothstep01(linkNormalizedLevel) * timelineLinkAmount)
 
         if (linkedTimelineSpeed <= 0.0001) {
-          video.pause()
+          // Keep media clock moving at a very low speed to avoid pause/play thrash
+          // under layered reactive timelines.
+          setSafePlaybackRate(video, MIN_SUPPORTED_PLAYBACK_RATE)
           lastTimelineTriggerRef.current[layer.layerIndex] = false
+          tryResumeVideo(video)
           return
         }
 
@@ -636,8 +932,11 @@ export default function OutputPreview({
         const normalizedLevel = Math.max(0, normalizedBand - threshold) / Math.max(0.0001, 1 - threshold)
         const drivenSpeed = clamp01(smoothstep01(normalizedLevel) * timelineAmount)
         if (drivenSpeed <= 0.0001) {
-          video.pause()
+          // Keep media clock moving at a very low speed to avoid pause/play thrash
+          // under layered reactive timelines.
+          setSafePlaybackRate(video, MIN_SUPPORTED_PLAYBACK_RATE)
           lastTimelineTriggerRef.current[layer.layerIndex] = false
+          tryResumeVideo(video)
           return
         }
 
@@ -649,10 +948,22 @@ export default function OutputPreview({
 
       tryResumeVideo(video)
     })
-  }, [layers, bassLevel, spectrumLevels, bpm])
+    } // end tick
+    const intervalId = setInterval(tick, 100)  // PHASE 2: Increased from 50ms to 100ms
+    return () => clearInterval(intervalId)
+  }, [])
 
   useEffect(() => {
-    // Safety net: after any layer/motion change, keep active preview videos playing.
+    // Safety net: after layer/motion change, keep active preview videos playing.
+    // Disable in multi-layer mode to avoid play() churn under decoder pressure.
+    const activeLayerCount = layers.reduce(
+      (count, layer) => (typeof layer.activeSlotIndex === 'number' ? count + 1 : count),
+      0,
+    )
+    if (activeLayerCount >= 2) {
+      return
+    }
+
     layers.forEach((layer) => {
       const active = typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
       if (!active?.filePath || active.status !== 'loaded') {
@@ -669,6 +980,9 @@ export default function OutputPreview({
   useEffect(() => {
     async function ensureReverseClips() {
       const currentLayers = latestLayersRef.current || []
+      if (latestActiveCountRef.current >= 2) {
+        return
+      }
 
       for (const layer of currentLayers) {
         const active =
@@ -742,7 +1056,16 @@ export default function OutputPreview({
 
   // Preload clips near active slots (nearby range)
   useEffect(() => {
-    if (!enablePreload) {
+    const activeLayerCount = layers.reduce(
+      (count, layer) => (typeof layer.activeSlotIndex === 'number' ? count + 1 : count),
+      0,
+    )
+
+    // Multi-layer playback is decoder-heavy already. Avoid hidden preloads in this state,
+    // which can starve active streams and look like a freeze when another layer engages.
+    const shouldPreload = enablePreload && activeLayerCount <= 1
+
+    if (!shouldPreload) {
       Object.values(preloadedRefsRef.current).forEach((video) => {
         if (video) {
           video.pause()
@@ -758,8 +1081,8 @@ export default function OutputPreview({
     layers.forEach((layer) => {
       const activeSlot = typeof layer.activeSlotIndex === 'number' ? layer.activeSlotIndex : -1
       if (activeSlot >= 0) {
-        // Preload: active slot and ±2 slots around it
-        for (let i = Math.max(0, activeSlot - 2); i <= Math.min(layer.slots.length - 1, activeSlot + 2); i++) {
+        // Preload: active slot and ±1 slot around it to reduce decode pressure.
+        for (let i = Math.max(0, activeSlot - 1); i <= Math.min(layer.slots.length - 1, activeSlot + 1); i++) {
           const slot = layer.slots[i]
           if (slot.filePath && slot.status === 'loaded') {
             toPreload.add(`${layer.layerIndex}-${i}`)
@@ -1005,7 +1328,7 @@ export default function OutputPreview({
         seekVideoEfficient(video, bounds.start)
         bounceCanPlaySeekRef.current[bounceCanPlayKey] = true
       }
-      tryResumeVideo(video)
+      tryResumeVideo(video, 0)
       setVideoErrors((prev) => {
         const next = { ...prev }
         delete next[getVideoErrorKey(layerIndex, slotIndex, effectivePath)]
@@ -1047,6 +1370,10 @@ export default function OutputPreview({
   }
 
   function maybeAdvanceBouncePhase(layerIndex, filePath, motion, video) {
+    if (latestActiveCountRef.current >= 2) {
+      return false
+    }
+
     const segment = getSegmentBounds(video, motion || {})
     if (!segment) {
       return false
@@ -1121,13 +1448,17 @@ export default function OutputPreview({
   }
 
   const handleVideoTimeUpdate = (layerIndex, slotIndex, filePath, motion, event) => {
+    if (latestActiveCountRef.current >= 2) {
+      return
+    }
+
     const video = event.currentTarget
     const segment = getSegmentBounds(video, motion || {})
     if (!segment) {
       return
     }
 
-    const bounceEnabled = Boolean(motion?.bounceEnabled)
+    const bounceEnabled = latestActiveCountRef.current < 2 && Boolean(motion?.bounceEnabled)
     const timelineDriven = (motion?.timelineAmount ?? 0) > 0
     if (bounceEnabled) {
       if (maybeAdvanceBouncePhase(layerIndex, filePath, motion, video)) {
@@ -1148,10 +1479,20 @@ export default function OutputPreview({
 
   // Watchdog: keep bounce switching even when media events become sparse or stall.
   useEffect(() => {
-    let frameId = null
-
     const tick = () => {
       const currentLayers = latestLayersRef.current || []
+      if (latestActiveCountRef.current >= 2) {
+        return
+      }
+      const hasAnyBounceLayer = currentLayers.some((layer) => {
+        const active = typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
+        return Boolean(layer?.videoMotion?.bounceEnabled && active?.filePath && active?.status === 'loaded')
+      })
+
+      if (!hasAnyBounceLayer) {
+        return
+      }
+
       currentLayers.forEach((layer) => {
         const motion = layer?.videoMotion || {}
         if (!motion?.bounceEnabled) {
@@ -1176,22 +1517,371 @@ export default function OutputPreview({
         }
 
         maybeAdvanceBouncePhase(layer.layerIndex, active.filePath, motion, video)
-        
-        // After phase advance check, always ensure video is playing.
-        // This prevents freezes where the video gets paused after phase flip/remount.
-        tryResumeVideo(video)
-      })
 
-      frameId = requestAnimationFrame(tick)
+        // Avoid hammering play() every frame when multiple layers/effects are active.
+        const resumeKey = `${layer.layerIndex}-${active.filePath || 'no-file'}`
+        const now = performance.now()
+        const lastResumeAt = lastBounceResumeAtRef.current[resumeKey] || 0
+        if (video.paused && now - lastResumeAt >= BOUNCE_WATCHDOG_RESUME_COOLDOWN_MS) {
+          lastBounceResumeAtRef.current[resumeKey] = now
+          tryResumeVideo(video)
+        }
+      })
     }
 
-    frameId = requestAnimationFrame(tick)
+    const intervalId = setInterval(tick, 100)
     return () => {
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId)
-      }
+      clearInterval(intervalId)
     }
   }, [])
+
+  // Watchdog: recover layers whose decoded frame clock stops advancing.
+  useEffect(() => {
+    const tick = () => {
+      const currentLayers = latestLayersRef.current || []
+      const now = performance.now()
+      const nextWatch = {}
+
+      currentLayers.forEach((layer) => {
+        const active = typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
+        if (!active?.filePath || active.status !== 'loaded') {
+          return
+        }
+
+        const video = videoRefsRef.current[layer.layerIndex]
+        if (!video || video.readyState < 2 || !Number.isFinite(video.currentTime)) {
+          return
+        }
+
+        const watchKey = `${layer.layerIndex}-${active.filePath}`
+        const prev = stallWatchRef.current[watchKey] || {
+          lastTime: video.currentTime,
+          lastAdvanceAt: now,
+          lastRecoverAt: 0,
+        }
+
+        const currentTime = video.currentTime
+        const progressed = Math.abs(currentTime - prev.lastTime) >= 0.002
+        const next = {
+          ...prev,
+          lastTime: currentTime,
+          lastAdvanceAt: progressed ? now : prev.lastAdvanceAt,
+        }
+
+        if (progressed) {
+          const stallStats = stallRecoveryStatsRef.current[watchKey] || {
+            nudgeAttempts: 0,
+            lastHardResetAt: 0,
+            lastRecoverAt: 0,
+          }
+          const sinceRecover = now - (stallStats.lastRecoverAt || 0)
+          const shouldResetAttempts = sinceRecover >= STALL_SUCCESS_RESET_MS
+          stallRecoveryStatsRef.current[watchKey] = {
+            nudgeAttempts: shouldResetAttempts ? 0 : (stallStats.nudgeAttempts || 0),
+            lastHardResetAt: stallStats.lastHardResetAt || 0,
+            lastRecoverAt: stallStats.lastRecoverAt || 0,
+          }
+          if (shouldResetAttempts) {
+            delete stallSeekGuardRef.current[watchKey]
+          }
+          nextWatch[watchKey] = next
+          return
+        }
+
+        if (video.paused) {
+          const lastResumeAt = lastBounceResumeAtRef.current[watchKey] || 0
+          if (now - lastResumeAt >= BOUNCE_WATCHDOG_RESUME_COOLDOWN_MS) {
+            lastBounceResumeAtRef.current[watchKey] = now
+            tryResumeVideo(video)
+          }
+          nextWatch[watchKey] = next
+          return
+        }
+
+        const isMultiLayer = (latestActiveCountRef.current || 0) >= 2
+        // When timeline logic intentionally drives very low playback rates,
+        // currentTime can appear nearly static. Treat this as intentional.
+        if (!isMultiLayer && Number.isFinite(video.playbackRate) && video.playbackRate <= STALL_SINGLE_LAYER_LOW_RATE_SKIP) {
+          nextWatch[watchKey] = next
+          return
+        }
+
+        const stalledForMs = now - next.lastAdvanceAt
+        const stallThreshold = isMultiLayer ? STALL_DETECT_MULTILAYER_MS : STALL_DETECT_MS
+        const recoveryCooldown = isMultiLayer
+          ? STALL_RECOVERY_COOLDOWN_MULTILAYER_MS
+          : STALL_RECOVERY_COOLDOWN_MS
+        const canRecover = now - next.lastRecoverAt >= recoveryCooldown
+        if (stalledForMs >= stallThreshold && canRecover) {
+          outputTelemetryRef.current.totalStallDetections += 1
+          outputTelemetryRef.current.lastStallAt = Date.now()
+          publishOutputTelemetry(false)
+
+          // In multi-layer mode avoid hard-reset/remount cascades, but still attempt
+          // lightweight local recovery so a frozen layer does not remain frozen forever.
+          if (isMultiLayer) {
+            const stallStats = stallRecoveryStatsRef.current[watchKey] || {
+              nudgeAttempts: 0,
+              lastHardResetAt: 0,
+              lastRecoverAt: 0,
+            }
+            const seekGuard = stallSeekGuardRef.current[watchKey] || {
+              seekBurstCount: 0,
+              cooldownUntil: 0,
+            }
+
+            // PHASE 1: Reduce decoder churn by using cheaper recovery first
+            // Recovery strategy (escalating):
+            // 1. Attempt 1-2: Simple pause/play (cheap, no seek)
+            // 2. Attempt 3+: Micro-seek as last resort
+            const attemptCount = stallStats.nudgeAttempts || 0
+            const seekCooldownActive = now < (seekGuard.cooldownUntil || 0)
+            let recoveryAction = 'none'
+
+            // Step 1: Ensure rate is at 1x in multi-layer mode
+            if (Number.isFinite(video.playbackRate) && Math.abs(video.playbackRate - 1) > 0.05) {
+              setSafePlaybackRate(video, 1)
+            }
+
+            // Step 2: Cheap pause/play recovery for early attempts
+            if (attemptCount < 2) {
+              let nudged = false
+              // Try pause/play as primary recovery (no seek involved)
+              if (video.paused) {
+                tryResumeVideo(video, 0)
+                nudged = true
+              } else if (stalledForMs >= STALL_MULTILAYER_MICRO_SEEK_MS * 0.5) {
+                nudged = tryPausePlayNudge(video)
+              }
+              if (nudged) {
+                recoveryAction = 'pause-play'
+              }
+            } else {
+              // Step 3: Only seek if pause/play hasn't worked after 2 attempts
+              if (stalledForMs >= STALL_MULTILAYER_MICRO_SEEK_MS && !seekCooldownActive) {
+                const segment = getSegmentBounds(video, layer.videoMotion || {})
+                if (segment) {
+                  const nudgeTarget = Math.min(segment.end - 0.01, Math.max(segment.start + 0.01, currentTime + 0.016))
+                  if (Number.isFinite(nudgeTarget) && Math.abs(nudgeTarget - currentTime) >= 0.004) {
+                    seekVideoEfficient(video, nudgeTarget)
+                    recoveryAction = 'micro-seek'
+                  }
+                } else if (Number.isFinite(currentTime)) {
+                  const fallbackTarget = Math.max(0, currentTime + 0.016)
+                  if (Math.abs(fallbackTarget - currentTime) >= 0.004) {
+                    seekVideoEfficient(video, fallbackTarget)
+                    recoveryAction = 'micro-seek'
+                  }
+                }
+              } else if (stalledForMs >= STALL_MULTILAYER_MICRO_SEEK_MS * 0.7) {
+                const nudged = video.paused ? (tryResumeVideo(video, 0), true) : tryPausePlayNudge(video)
+                if (nudged) {
+                  recoveryAction = seekCooldownActive ? 'pause-play-cooldown' : 'pause-play'
+                }
+              }
+            }
+
+            if (recoveryAction === 'micro-seek') {
+              const nextBurstCount = (seekGuard.seekBurstCount || 0) + 1
+              const shouldCooldown = nextBurstCount >= STALL_MULTILAYER_MAX_SEEK_BURST
+              stallSeekGuardRef.current[watchKey] = {
+                seekBurstCount: shouldCooldown ? 0 : nextBurstCount,
+                cooldownUntil: shouldCooldown ? now + STALL_MULTILAYER_SEEK_COOLDOWN_MS : (seekGuard.cooldownUntil || 0),
+              }
+            } else {
+              stallSeekGuardRef.current[watchKey] = {
+                seekBurstCount: seekGuard.seekBurstCount || 0,
+                cooldownUntil: seekGuard.cooldownUntil || 0,
+              }
+            }
+
+            const didRecover = recoveryAction !== 'none'
+            const nextNudgeAttempts = recoveryAction === 'micro-seek'
+              ? 1
+              : didRecover
+                ? Math.min(2, (stallStats.nudgeAttempts || 0) + 1)
+                : (stallStats.nudgeAttempts || 0)
+
+            stallRecoveryStatsRef.current[watchKey] = {
+              nudgeAttempts: nextNudgeAttempts,
+              lastHardResetAt: stallStats.lastHardResetAt || 0,
+              lastRecoverAt: didRecover ? now : (stallStats.lastRecoverAt || 0),
+            }
+            if (didRecover) {
+              next.lastRecoverAt = now
+              next.lastAdvanceAt = now
+              outputTelemetryRef.current.totalSoftRecoveries += 1
+              outputTelemetryRef.current.lastRecoveryAt = Date.now()
+              publishOutputTelemetry(true)
+            }
+            
+            if (MEDIA_DEBUG && recoveryAction !== 'none') {
+              console.warn(
+                `[video:stall-soft-recover-multilayer] layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} stalledMs=${Math.round(stalledForMs)} action=${recoveryAction} attempt=${attemptCount + 1}`,
+              )
+            }
+            nextWatch[watchKey] = next
+            return
+          }
+
+          const stallStats = stallRecoveryStatsRef.current[watchKey] || {
+            nudgeAttempts: 0,
+            lastHardResetAt: 0,
+            lastRecoverAt: 0,
+          }
+          const sinceLastRecover = now - (stallStats.lastRecoverAt || 0)
+          const recentRecover = sinceLastRecover <= STALL_PROGRESS_GRACE_MS
+          const effectiveAttempts = recentRecover
+            ? Math.max(stallStats.nudgeAttempts || 0, 1)
+            : (stallStats.nudgeAttempts || 0)
+          const canHardReset = now - stallStats.lastHardResetAt >= STALL_HARD_RESET_COOLDOWN_MS
+          const shouldHardReset = effectiveAttempts >= STALL_MAX_NUDGE_ATTEMPTS && canHardReset
+
+          const shouldFailClip = !canHardReset && effectiveAttempts >= STALL_FAIL_AFTER_ATTEMPTS
+
+          if (shouldFailClip) {
+            const failKey = getVideoErrorKey(layer.layerIndex, active.slotIndex, active.filePath)
+            setVideoErrors((prev) => ({ ...prev, [failKey]: true }))
+            if (markSlotFailed) {
+              markSlotFailed(layer.layerIndex, active.slotIndex, 'Playback stalled repeatedly; clip disabled to keep output stable.', 'failed')
+            }
+            try {
+              video.pause()
+              video.removeAttribute('src')
+              video.load()
+            } catch {
+              // ignore teardown races
+            }
+
+            stallRecoveryStatsRef.current[watchKey] = {
+              nudgeAttempts: 0,
+              lastHardResetAt: stallStats.lastHardResetAt || 0,
+              lastRecoverAt: now,
+            }
+            next.lastRecoverAt = now
+            next.lastAdvanceAt = now
+
+            if (MEDIA_DEBUG) {
+              console.warn(
+                `[video:stall-fail] layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} stalledMs=${Math.round(stalledForMs)}`,
+              )
+            }
+
+            nextWatch[watchKey] = next
+            return
+          }
+
+          if (shouldHardReset) {
+            setVideoRemountVersion((prev) => ({
+              ...prev,
+              [layer.layerIndex]: (prev[layer.layerIndex] || 0) + 1,
+            }))
+
+            stallRecoveryStatsRef.current[watchKey] = {
+              nudgeAttempts: 0,
+              lastHardResetAt: now,
+              lastRecoverAt: now,
+            }
+            next.lastRecoverAt = now
+            next.lastAdvanceAt = now
+
+            if (MEDIA_DEBUG) {
+              console.warn(
+                `[video:stall-hard-reset] layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} stalledMs=${Math.round(stalledForMs)}`,
+              )
+            }
+
+            nextWatch[watchKey] = next
+            return
+          }
+
+          // Single-layer mode: prefer cheap pause/play nudges before seek-based recovery
+          // to reduce visible jumps and decoder churn.
+          if (effectiveAttempts < STALL_SINGLE_LAYER_PAUSE_PLAY_ATTEMPTS) {
+            let didNudge = false
+            if (video.paused) {
+              tryResumeVideo(video, 0)
+              didNudge = true
+            } else {
+              didNudge = tryPausePlayNudge(video)
+            }
+
+            if (didNudge) {
+              stallRecoveryStatsRef.current[watchKey] = {
+                nudgeAttempts: effectiveAttempts + 1,
+                lastHardResetAt: stallStats.lastHardResetAt || 0,
+                lastRecoverAt: now,
+              }
+              next.lastRecoverAt = now
+              next.lastAdvanceAt = now
+              outputTelemetryRef.current.totalSoftRecoveries += 1
+              outputTelemetryRef.current.lastRecoveryAt = Date.now()
+              publishOutputTelemetry(true)
+
+              if (MEDIA_DEBUG) {
+                console.warn(
+                  `[video:stall-recover] layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} stalledMs=${Math.round(stalledForMs)} action=pause-play`,
+                )
+              }
+
+              nextWatch[watchKey] = next
+              return
+            }
+          }
+
+          const segment = getSegmentBounds(video, layer.videoMotion || {})
+          if (segment) {
+            const nudgeTarget = Math.min(segment.end - 0.02, Math.max(segment.start, currentTime + 0.08))
+            if (Number.isFinite(nudgeTarget) && nudgeTarget >= segment.start) {
+              seekVideoEfficient(video, nudgeTarget)
+            }
+          } else {
+            seekVideoEfficient(video, Math.max(0, currentTime + 0.08))
+          }
+
+          tryResumeVideo(video)
+          stallRecoveryStatsRef.current[watchKey] = {
+            nudgeAttempts: effectiveAttempts + 1,
+            lastHardResetAt: stallStats.lastHardResetAt || 0,
+            lastRecoverAt: now,
+          }
+          next.lastRecoverAt = now
+          next.lastAdvanceAt = now
+          next.lastTime = video.currentTime
+          outputTelemetryRef.current.totalSoftRecoveries += 1
+          outputTelemetryRef.current.lastRecoveryAt = Date.now()
+          publishOutputTelemetry(true)
+
+          if (MEDIA_DEBUG) {
+            console.warn(
+              `[video:stall-recover] layer=${layer.layerIndex + 1} slot=${active.slotIndex + 1} stalledMs=${Math.round(stalledForMs)} action=seek`,
+            )
+          }
+        }
+
+        nextWatch[watchKey] = next
+      })
+
+      stallWatchRef.current = nextWatch
+      const nextStats = {}
+      Object.keys(nextWatch).forEach((key) => {
+        nextStats[key] = stallRecoveryStatsRef.current[key] || {
+          nudgeAttempts: 0,
+          lastHardResetAt: 0,
+          lastRecoverAt: 0,
+        }
+      })
+      stallRecoveryStatsRef.current = nextStats
+      publishOutputTelemetry(false)
+    }
+
+    const intervalId = setInterval(tick, STALL_WATCHDOG_INTERVAL_MS)
+    return () => {
+      clearInterval(intervalId)
+      stallWatchRef.current = {}
+      publishOutputTelemetry(true)
+    }
+  }, [publishOutputTelemetry])
 
   const handleVideoEnded = (layerIndex, slotIndex, filePath, motion, event) => {
     const video = event.currentTarget
@@ -1200,7 +1890,7 @@ export default function OutputPreview({
       return
     }
 
-    const bounceEnabled = Boolean(motion?.bounceEnabled)
+    const bounceEnabled = latestActiveCountRef.current < 2 && Boolean(motion?.bounceEnabled)
     if (bounceEnabled) {
       const bouncePhase = bouncePhaseRef.current[layerIndex] || 'forward'
       const reversePath = reverseClipPathRef.current[getBounceClipKey(filePath)]
@@ -1226,16 +1916,18 @@ export default function OutputPreview({
 
   const getRenderableLayer = useCallback((layer) => {
     const active = typeof layer.activeSlotIndex === 'number' ? layer.slots[layer.activeSlotIndex] : null
+    const isGeneratedClip = active?.type === 'generated'
     const canRenderVideo =
       layer.visible &&
       active &&
       active.status === 'loaded' &&
-      Boolean(active.filePath) &&
+      Boolean(active.filePath || isGeneratedClip) &&
       !videoErrors[getVideoErrorKey(layer.layerIndex, active.slotIndex, active.filePath)]
 
     if (!canRenderVideo) {
       return {
         canRenderVideo: false,
+        isGeneratedClip: false,
         active,
         bounceReady: false,
         effectivePath: active?.filePath || '',
@@ -1243,7 +1935,18 @@ export default function OutputPreview({
       }
     }
 
-    const bounceEnabled = Boolean(layer.videoMotion?.bounceEnabled)
+    if (isGeneratedClip) {
+      return {
+        canRenderVideo: true,
+        isGeneratedClip: true,
+        active,
+        bounceReady: false,
+        effectivePath: '',
+        src: '',
+      }
+    }
+
+    const bounceEnabled = latestActiveCountRef.current < 2 && Boolean(layer.videoMotion?.bounceEnabled)
     const bouncePhase = bouncePhaseRef.current[layer.layerIndex] || 'forward'
     const reversePath = reverseClipPathRef.current[getBounceClipKey(active.filePath)]
     const bounceReady = bounceEnabled && Boolean(reversePath)
@@ -1253,6 +1956,7 @@ export default function OutputPreview({
 
     return {
       canRenderVideo: true,
+      isGeneratedClip: false,
       active,
       bounceReady,
       effectivePath,
@@ -1265,412 +1969,57 @@ export default function OutputPreview({
     0,
   )
 
-  // Defensive normalize in case stale saved state or sync payload sends out-of-range values.
-  const rawKaleidoAmount = Number.isFinite(masterFx?.kaleido) ? masterFx.kaleido : 0
-  const kaleidoBaseAmount = clamp01(rawKaleidoAmount)
-  const kaleidoAudioAmount = clamp01(masterFx?.kaleidoAudio ?? 0)
-  const kaleidoSource = masterFx?.kaleidoSource || 'mid'
-  const kaleidoBandLevel = clamp01(getSpectrumSourceLevel(spectrumLevels, kaleidoSource, bassLevel))
-  const kaleidoIntensity = clamp01(
-    kaleidoBaseAmount * (0.35 + 0.65 * (kaleidoAudioAmount > 0 ? kaleidoBandLevel : 1)),
-  )
-  const kaleidoBaseSegments = Number.isFinite(masterFx?.kaleidoSegments)
-    ? Math.round(masterFx.kaleidoSegments)
-    : 8
-  const kaleidoSegments = Math.max(
-    3,
-    Math.min(18, kaleidoBaseSegments + Math.round(kaleidoIntensity * 8 + kaleidoBandLevel * kaleidoAudioAmount * 4)),
-  )
-  const kaleidoSpinBase = Number.isFinite(masterFx?.kaleidoSpin) ? masterFx.kaleidoSpin : 0
-  const kaleidoSpinDegPerSec = kaleidoSpinBase * (55 + kaleidoIntensity * 145) + kaleidoBandLevel * kaleidoAudioAmount * 130
-  const kaleidoActive = kaleidoIntensity > 0.01
-  // Keep the base video at full brightness; kaleido should add on top, not dim the source.
+  useEffect(() => {
+    latestActiveCountRef.current = activeCount
+  }, [activeCount])
+
+  // Keep the base video at full brightness.
   const baseLayerOpacity = 1
-  const kaleidoZoom = 1.01 + kaleidoIntensity * 0.95 + kaleidoBandLevel * kaleidoAudioAmount * 0.22
-  const kaleidoOffset = 1 + kaleidoIntensity * 14 + kaleidoBandLevel * kaleidoAudioAmount * 5
-  const kaleidoCoreSize = 5 + (1 - kaleidoIntensity) * 4
+  const outputOverlayEnabled = Boolean(showOverlays)
 
-  kaleidoParamsRef.current = {
-    active: kaleidoActive,
-    intensity: kaleidoIntensity,
-    segments: kaleidoSegments,
-    spinDegPerSec: kaleidoSpinDegPerSec,
-    zoom: kaleidoZoom,
-    offsetPct: Math.max(0.03, Math.min(0.18, kaleidoOffset / 100)),
-    coreSizePct: kaleidoCoreSize,
-  }
-
-  useEffect(() => {
-    const canvas = kaleidoCanvasRef.current
-    if (!canvas) {
-      return undefined
-    }
-
-    if (!kaleidoSourceCanvasRef.current) {
-      kaleidoSourceCanvasRef.current = document.createElement('canvas')
-    }
-    const sourceCanvas = kaleidoSourceCanvasRef.current
-
-    if (!kaleidoSampleCanvasRef.current) {
-      kaleidoSampleCanvasRef.current = document.createElement('canvas')
-    }
-    const sampleCanvas = kaleidoSampleCanvasRef.current
-
-    const ctx = canvas.getContext('2d')
-    const sourceCtx = sourceCanvas.getContext('2d')
-    const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true })
-    if (!ctx || !sourceCtx || !sampleCtx) {
-      return undefined
-    }
-
-    let frameId = null
-    const draw = () => {
-      const previewEl = previewRef.current
-      const params = kaleidoParamsRef.current
-      if (!previewEl || !params.active || blackout) {
-        if (canvas.width > 0 && canvas.height > 0) {
-          ctx.setTransform(1, 0, 0, 1, 0, 0)
-          ctx.clearRect(0, 0, canvas.width, canvas.height)
-        }
-        frameId = requestAnimationFrame(draw)
-        return
-      }
-
-      const rect = previewEl.getBoundingClientRect()
-      const width = Math.max(2, Math.round(rect.width))
-      const height = Math.max(2, Math.round(rect.height))
-      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1))
-      const targetW = Math.round(width * dpr)
-      const targetH = Math.round(height * dpr)
-      if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW
-        canvas.height = targetH
-      }
-      if (sourceCanvas.width !== width || sourceCanvas.height !== height) {
-        sourceCanvas.width = width
-        sourceCanvas.height = height
-      }
-      const processScale = Math.min(1, 420 / width)
-      const processWidth = Math.max(120, Math.round(width * processScale))
-      const processHeight = Math.max(68, Math.round(height * processScale))
-      if (sampleCanvas.width !== processWidth || sampleCanvas.height !== processHeight) {
-        sampleCanvas.width = processWidth
-        sampleCanvas.height = processHeight
-      }
-
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      ctx.clearRect(0, 0, width, height)
-
-      sourceCtx.setTransform(1, 0, 0, 1, 0, 0)
-      sourceCtx.clearRect(0, 0, width, height)
-
-      const cx = width * 0.5
-      const cy = height * 0.5
-      const safeIntensity = clamp01(params.intensity)
-      const blendAmount = smoothstep01(safeIntensity)
-      const safeSegments = Number.isFinite(params.segments) ? params.segments : 8
-      const segments = Math.max(3, Math.min(18, Math.round(safeSegments)))
-      const now = performance.now() * 0.001
-      const safeSpin = Number.isFinite(params.spinDegPerSec) ? Math.max(-720, Math.min(720, params.spinDegPerSec)) : 0
-      const sampleRotate = (now * safeSpin * Math.PI) / 180
-      const safeZoom = Number.isFinite(params.zoom) ? Math.max(1.02, Math.min(2.4, params.zoom)) : 1.18
-      const safeOffsetPct = Number.isFinite(params.offsetPct) ? Math.max(0.005, Math.min(0.22, params.offsetPct)) : 0.08
-      let drewAnyVideo = false
-
-      const currentLayers = latestLayersRef.current || []
-      currentLayers.forEach((layer) => {
-        const active =
-          typeof layer.activeSlotIndex === 'number' ? layer.slots?.[layer.activeSlotIndex] : null
-        if (!layer.visible || !active?.filePath || active.status !== 'loaded') {
-          return
-        }
-        const srcVideo = videoRefsRef.current[layer.layerIndex]
-        if (!srcVideo || srcVideo.readyState < 2) {
-          return
-        }
-
-        sourceCtx.globalAlpha = Math.max(0, Math.min(1, layer.opacity || 0))
-        sourceCtx.globalCompositeOperation = blendModeToCanvasOperation(layer.blendMode)
-        const scale = Number.isFinite(layer.videoMotion?.scale) ? layer.videoMotion.scale : 1
-
-        sourceCtx.save()
-        sourceCtx.translate(cx, cy)
-        sourceCtx.scale(scale, scale)
-        sourceCtx.drawImage(srcVideo, -width * 0.5, -height * 0.5, width, height)
-        sourceCtx.restore()
-        drewAnyVideo = true
-      })
-
-      if (!drewAnyVideo) {
-        frameId = requestAnimationFrame(draw)
-        return
-      }
-
-      let renderedPolarRemap = false
-      try {
-        sampleCtx.setTransform(1, 0, 0, 1, 0, 0)
-        sampleCtx.clearRect(0, 0, processWidth, processHeight)
-        sampleCtx.drawImage(sourceCanvas, 0, 0, processWidth, processHeight)
-
-        const sourceImage = sampleCtx.getImageData(0, 0, processWidth, processHeight)
-        const outputImage = sampleCtx.createImageData(processWidth, processHeight)
-        const sourcePixels = sourceImage.data
-        const outputPixels = outputImage.data
-        const procCx = processWidth * 0.5
-        const procCy = processHeight * 0.5
-        const sourceCx = procCx + Math.cos(sampleRotate * 0.7) * processWidth * (0.04 + safeIntensity * 0.18)
-        const sourceCy = procCy - processHeight * (safeOffsetPct * 0.18 + safeIntensity * 0.1) + Math.sin(sampleRotate * 0.45) * processHeight * safeIntensity * 0.06
-        const segmentAngle = (Math.PI * 2) / segments
-        const maxRadius = Math.hypot(procCx, procCy)
-        const twistStrength = 0.8 + safeIntensity * 4.2
-        const radialZoom = safeZoom * (1.08 + safeIntensity * 0.92)
-
-        for (let y = 0; y < processHeight; y += 1) {
-          const dy = y - procCy
-          for (let x = 0; x < processWidth; x += 1) {
-            const dx = x - procCx
-            const radius = Math.hypot(dx, dy)
-            const radiusNorm = maxRadius > 0 ? radius / maxRadius : 0
-            let angle = Math.atan2(dy, dx) - sampleRotate * (0.55 + safeIntensity * 0.35)
-            angle = ((angle % segmentAngle) + segmentAngle) % segmentAngle
-            if (angle > segmentAngle * 0.5) {
-              angle = segmentAngle - angle
-            }
-
-            const sampleAngle = angle + sampleRotate * 0.25 + radiusNorm * twistStrength
-            const sampleRadius = radius / radialZoom
-            const warpX = Math.sin(radiusNorm * 8 - sampleRotate * 0.8) * processWidth * safeIntensity * 0.025
-            const warpY = Math.cos(radiusNorm * 7 + sampleRotate * 0.6) * processHeight * safeIntensity * 0.025
-            const sampleX = Math.max(0, Math.min(processWidth - 1, Math.round(sourceCx + Math.cos(sampleAngle) * sampleRadius + warpX)))
-            const sampleY = Math.max(0, Math.min(processHeight - 1, Math.round(sourceCy + Math.sin(sampleAngle) * sampleRadius + warpY)))
-            const sourceIndex = (sampleY * processWidth + sampleX) * 4
-            const outputIndex = (y * processWidth + x) * 4
-
-            outputPixels[outputIndex] = sourcePixels[sourceIndex]
-            outputPixels[outputIndex + 1] = sourcePixels[sourceIndex + 1]
-            outputPixels[outputIndex + 2] = sourcePixels[sourceIndex + 2]
-            outputPixels[outputIndex + 3] = sourcePixels[sourceIndex + 3]
-          }
-        }
-
-        sampleCtx.putImageData(outputImage, 0, 0)
-        renderedPolarRemap = true
-      } catch {
-        renderedPolarRemap = false
-      }
-
-      if (renderedPolarRemap) {
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.globalAlpha = Math.min(1, 0.38 + blendAmount * 0.62)
-        ctx.drawImage(sampleCanvas, 0, 0, width, height)
-      } else {
-        const radius = Math.hypot(width, height) * 1.06
-        const step = (Math.PI * 2) / segments
-        for (let i = 0; i < segments; i += 1) {
-          ctx.save()
-          ctx.translate(cx, cy)
-          ctx.rotate(i * step)
-          ctx.beginPath()
-          ctx.moveTo(0, 0)
-          ctx.lineTo(Math.cos(-step * 0.5) * radius, Math.sin(-step * 0.5) * radius)
-          ctx.lineTo(Math.cos(step * 0.5) * radius, Math.sin(step * 0.5) * radius)
-          ctx.closePath()
-          ctx.clip()
-
-          if (i % 2 === 1) {
-            ctx.scale(-1, 1)
-          }
-
-          const twist = step * (0.24 + safeIntensity * 0.9)
-          const offsetX = width * (0.1 + safeIntensity * 0.16)
-          const offsetY = height * (safeOffsetPct * 0.5 + safeIntensity * 0.06)
-          ctx.rotate(sampleRotate + (i % 2 === 0 ? twist : -twist))
-          ctx.scale(safeZoom * (1.04 + safeIntensity * 0.26), safeZoom * (1.04 + safeIntensity * 0.26))
-          ctx.translate(i % 2 === 0 ? offsetX : -offsetX, -offsetY)
-          ctx.globalAlpha = Math.min(1, 0.42 + blendAmount * 0.58)
-          ctx.globalCompositeOperation = i % 2 === 0 ? 'source-over' : 'screen'
-          ctx.drawImage(sourceCanvas, -width * 0.5, -height * 0.5, width, height)
-          ctx.restore()
-        }
-      }
-
-      frameId = requestAnimationFrame(draw)
-    }
-
-    frameId = requestAnimationFrame(draw)
-    return () => {
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId)
-      }
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-    }
-  }, [blackout])
-
-  useEffect(() => {
-    const canvas = generatedSceneCanvasRef.current
-    if (!canvas) {
-      return undefined
-    }
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      return undefined
-    }
-
-    let frameId = null
-    const draw = (timestamp) => {
-      if (!generatedSceneActive || blackout) {
-        if (canvas.width > 0 && canvas.height > 0) {
-          ctx.setTransform(1, 0, 0, 1, 0, 0)
-          ctx.clearRect(0, 0, canvas.width, canvas.height)
-        }
-        frameId = requestAnimationFrame(draw)
-        return
-      }
-
-      const previewEl = previewRef.current
-      if (!previewEl) {
-        frameId = requestAnimationFrame(draw)
-        return
-      }
-
-      const rect = previewEl.getBoundingClientRect()
-      const width = Math.max(2, Math.round(rect.width))
-      const height = Math.max(2, Math.round(rect.height))
-      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1))
-      const targetW = Math.round(width * dpr)
-      const targetH = Math.round(height * dpr)
-      if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW
-        canvas.height = targetH
-      }
-
-      const t = timestamp * 0.001
-      const bass = clamp01(latestBassRef.current || 0)
-      const spec = latestSpectrumRef.current || {}
-      const low = clamp01(spec.low ?? bass)
-      const mid = clamp01(spec.mid ?? low)
-      const high = clamp01(spec.high ?? mid)
-      const full = clamp01(spec.full ?? (low + mid + high) / 3)
-      const cx = width * 0.5
-      const cy = height * 0.5
-
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      ctx.clearRect(0, 0, width, height)
-      ctx.fillStyle = '#040816'
-      ctx.fillRect(0, 0, width, height)
-
-      if (generatedSceneVariant === 0) {
-        const ringCount = 12
-        for (let i = 0; i < ringCount; i += 1) {
-          const p = i / ringCount
-          const radius = (Math.min(width, height) * 0.12) + p * Math.min(width, height) * (0.42 + bass * 0.25)
-          const wobble = Math.sin(t * (1.5 + p * 3) + p * 8) * (8 + low * 30)
-          ctx.lineWidth = 2 + high * 6
-          ctx.strokeStyle = `hsla(${180 + p * 120 + t * 14}, 90%, ${40 + p * 25}%, ${0.2 + full * 0.5})`
-          ctx.beginPath()
-          ctx.arc(cx + wobble, cy, radius, 0, Math.PI * 2)
-          ctx.stroke()
-        }
-      } else if (generatedSceneVariant === 1) {
-        const barCount = 64
-        const step = width / barCount
-        for (let i = 0; i < barCount; i += 1) {
-          const p = i / (barCount - 1)
-          const band = p < 0.33 ? low : p < 0.66 ? mid : high
-          const h = Math.max(8, height * (0.1 + band * 0.65) * (0.45 + 0.55 * Math.sin(t * 5 + i * 0.35) ** 2))
-          ctx.fillStyle = `hsla(${200 + p * 120 + t * 20}, 88%, ${44 + band * 34}%, 0.78)`
-          ctx.fillRect(i * step, height - h, Math.max(2, step - 1), h)
-        }
-      } else if (generatedSceneVariant === 2) {
-        const grad = ctx.createRadialGradient(cx, cy, 20, cx, cy, Math.hypot(width, height) * (0.55 + bass * 0.2))
-        grad.addColorStop(0, `hsla(${260 + t * 18}, 96%, ${50 + mid * 24}%, 0.9)`)
-        grad.addColorStop(0.45, `hsla(${180 + t * 26}, 92%, ${34 + high * 26}%, 0.62)`)
-        grad.addColorStop(1, 'rgba(5,10,22,0.2)')
-        ctx.fillStyle = grad
-        ctx.fillRect(0, 0, width, height)
-        for (let i = 0; i < 90; i += 1) {
-          const a = i * 0.21 + t * (0.6 + high * 1.4)
-          const r = (i / 90) * Math.min(width, height) * (0.75 + low * 0.25)
-          const x = cx + Math.cos(a) * r
-          const y = cy + Math.sin(a * 1.2) * r
-          const sz = 2 + full * 5
-          ctx.fillStyle = `hsla(${300 + i * 2 + t * 30}, 88%, ${44 + full * 28}%, 0.4)`
-          ctx.fillRect(x, y, sz, sz)
-        }
-      } else if (generatedSceneVariant === 3) {
-        const rays = 72
-        const radius = Math.hypot(width, height)
-        for (let i = 0; i < rays; i += 1) {
-          const a = (i / rays) * Math.PI * 2 + t * (0.7 + full * 1.8)
-          const len = radius * (0.35 + low * 0.7)
-          ctx.strokeStyle = `hsla(${20 + i * 4 + t * 40}, 90%, ${45 + high * 26}%, ${0.18 + full * 0.55})`
-          ctx.lineWidth = 1 + high * 5
-          ctx.beginPath()
-          ctx.moveTo(cx, cy)
-          ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len)
-          ctx.stroke()
-        }
-      } else {
-        const grid = 28
-        const cellW = width / grid
-        const cellH = height / grid
-        for (let y = 0; y < grid; y += 1) {
-          for (let x = 0; x < grid; x += 1) {
-            const p = (x + y) / (grid * 2)
-            const n = Math.sin((x * 0.7 + y * 0.9) + t * (2 + mid * 5))
-            const amp = 0.5 + 0.5 * n
-            const light = 22 + amp * (40 + high * 30)
-            ctx.fillStyle = `hsla(${150 + p * 180 + t * 18}, 80%, ${light}%, 0.7)`
-            ctx.fillRect(x * cellW, y * cellH, cellW + 1, cellH + 1)
-          }
-        }
-      }
-
-      frameId = requestAnimationFrame(draw)
-    }
-
-    frameId = requestAnimationFrame(draw)
-    return () => {
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId)
-      }
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-    }
-  }, [generatedSceneActive, generatedSceneVariant, blackout])
-
-    // PART 3: Merge energy FX with manual FX (additive, clamped).
-    // Energy boosts only apply when energy system is enabled; manual slider is always the base.
-    const energyGlowBoost = energySystemEnabled ? (smoothedEnergyFx?.glowBoost ?? 0) : 0
-    const dropGlowBoost = smoothedDropFx?.glowBoost ?? 0
-    const glowStrength = Math.min(1.5, masterFx.glow + energyGlowBoost + dropGlowBoost)
+  // PART 3: Merge energy FX with manual FX (additive, clamped).
     const energyBrightnessBoost = energySystemEnabled ? (smoothedEnergyFx?.brightnessBoost ?? 0) : 0
     const dropBrightnessBoost = smoothedDropFx?.brightnessBoost ?? 0
     const finalBrightness = Math.max(0.5, Math.min(1.5, masterFx.brightness + energyBrightnessBoost + dropBrightnessBoost))
+   
 
     const strobeActive = strobeFlash.opacity > 0.01
 
   return (
-    <section className="output-preview-wrap">
+    <section
+      ref={previewWrapRef}
+      className={`output-preview-wrap${isAspectPanelVisible ? '' : ' is-aspect-controls-hidden'}`}
+      onPointerEnter={outputOverlayEnabled ? () => {
+        setIsPreviewPointerInside((current) => (current ? current : true))
+        revealAspectPanel()
+        clearAspectPanelHideTimer()
+      } : undefined}
+      onPointerMove={outputOverlayEnabled ? () => {
+        if (!isAspectPanelVisible) {
+          revealAspectPanel()
+        }
+      } : undefined}
+      onPointerLeave={outputOverlayEnabled ? () => {
+        setIsPreviewPointerInside((current) => (current ? false : current))
+        scheduleAspectPanelHide()
+      } : undefined}
+      onPointerDown={outputOverlayEnabled ? () => {
+        revealAspectPanel()
+      } : undefined}
+    >
       <div
-        ref={previewRef}
-        className="output-preview"
-        role="img"
-        aria-label="Live output preview"
-        style={{
-           filter: `brightness(${finalBrightness})`,
-          '--glow-px': glowStrength > 0.01 ? `${(8 + glowStrength * 30).toFixed(2)}px` : '0px',
-          '--glow-alpha': glowStrength > 0.01 ? (0.1 + glowStrength * 0.2).toFixed(3) : '0',
-        }}
-      >
+  ref={previewRef}
+  className="output-preview"
+  role="img"
+  aria-label="Live output preview"
+>
         <div className="preview-backdrop" />
 
         {layers.map((layer) => {
           const renderInfo = getRenderableLayer(layer)
           const active = renderInfo.active
           const canRenderVideo = renderInfo.canRenderVideo
+          const isGeneratedClip = renderInfo.isGeneratedClip
 
           if (!canRenderVideo) {
             return (
@@ -1680,8 +2029,23 @@ export default function OutputPreview({
                 style={{
                   opacity: layer.visible ? layer.opacity * 0.1 : 0,
                   mixBlendMode: blendModeToCss(layer.blendMode),
-                  transform: 'translate3d(var(--shake-x, 0px), var(--shake-y, 0px), 0)',
                 }}
+              />
+            )
+          }
+
+          if (isGeneratedClip) {
+            return (
+              <GeneratedClipRenderer
+                key={`generated-${layer.label}-${active.id}`}
+                clip={active}
+                isActive={true}
+                opacity={layer.opacity * baseLayerOpacity}
+                blendMode={blendModeToCss(layer.blendMode)}
+                transform={`translate3d(var(--shake-x-${layer.layerIndex}, 0px), var(--shake-y-${layer.layerIndex}, 0px), 0)`}
+                spectrumLevels={spectrumLevels}
+                qualityMode={generatedQualityMode}
+                maxFps={generatedMaxFps}
               />
             )
           }
@@ -1689,7 +2053,8 @@ export default function OutputPreview({
           const bounceEnabled = Boolean(layer.videoMotion?.bounceEnabled)
           const bounceReady = renderInfo.bounceReady
           const effectivePath = renderInfo.effectivePath
-          const videoKey = `video-${layer.label}-${effectivePath}`
+          const remountVersion = videoRemountVersion[layer.layerIndex] || 0
+          const videoKey = `video-${layer.label}-${effectivePath}-${remountVersion}`
           const src = renderInfo.src
           if (MEDIA_DEBUG && !srcLogRef.current[videoKey]) {
             srcLogRef.current[videoKey] = true
@@ -1742,32 +2107,17 @@ export default function OutputPreview({
                 handleVideoError(layer.layerIndex, active.slotIndex, active.filePath, effectivePath, event)
               }
               style={{
-                opacity: generatedSceneActive ? 0 : layer.opacity * baseLayerOpacity,
+                opacity: layer.opacity * baseLayerOpacity,
                 mixBlendMode: blendModeToCss(layer.blendMode),
-                transform: `translate3d(var(--shake-x, 0px), var(--shake-y, 0px), 0) scale(${layer.videoMotion?.scale ?? 1})`,
+                transform: `translate3d(var(--shake-x-${layer.layerIndex}, 0px), var(--shake-y-${layer.layerIndex}, 0px), 0) scale(${layer.videoMotion?.scale ?? 1})`,
                 transformOrigin: 'center center',
+                willChange: 'transform',
               }}
             />
           )
         })}
 
-        {generatedSceneActive && (
-          <canvas
-            ref={generatedSceneCanvasRef}
-            className="kaleido-canvas"
-            style={{ opacity: '1' }}
-          />
-        )}
-
-        {kaleidoActive && (
-          <canvas
-            ref={kaleidoCanvasRef}
-            className="kaleido-canvas"
-            style={{ opacity: '1' }}
-          />
-        )}
-
-        {activeCount === 0 && !generatedSceneActive && (
+        {activeCount === 0 && (
           <div className="fallback-screen">
             <div className="fallback-content">
               <h1>SCALEZ REACTOR</h1>
@@ -1776,13 +2126,30 @@ export default function OutputPreview({
           </div>
         )}
 
-        <div className="fx-glow-layer" />
-        <div
-          key={`strobe-${strobeFlash.key}`}
-          className={`fx-strobe-layer ${strobeActive ? 'is-flash' : ''}`}
-          style={{ opacity: strobeFlash.opacity }}
-        />
-        <div className={`fx-blackout-layer ${blackout ? 'is-on' : ''}`} />
+       <div
+  className="fx-brightness-layer"
+  style={{
+    opacity: finalBrightness > 1
+      ? Math.min(0.85, (finalBrightness - 1) / 1.0)
+      : 0,
+    willChange: 'opacity',
+  }}
+/>
+<div
+  className="fx-dimmer-layer"
+  style={{
+    opacity: finalBrightness < 1
+      ? Math.min(0.85, 1 - finalBrightness)
+      : 0,
+    willChange: 'opacity',
+  }}
+/>
+<div
+  key={`strobe-${strobeFlash.key}`}
+  className={`fx-strobe-layer ${strobeActive ? 'is-flash' : ''}`}
+  style={{ opacity: strobeFlash.opacity }}
+/>
+<div className={`fx-blackout-layer ${blackout ? 'is-on' : ''}`} />
 
         {showOverlays ? (
           <div className="preview-overlays">
@@ -1814,6 +2181,44 @@ export default function OutputPreview({
           </div>
         ) : null}
       </div>
+      {showOverlays && (
+        <OutputPresetPanel
+          activePreset={activePreset}
+          onPresetChange={(presetId, ratio) => {
+            setActivePreset(presetId, ratio)
+            revealAspectPanel()
+          }}
+        />
+      )}
     </section>
   )
 }
+
+function areOutputPreviewPropsEqual(prev, next) {
+  return (
+    prev.layers === next.layers
+    && prev.fps === next.fps
+    && prev.bassLevel === next.bassLevel
+    && prev.spectrumLevels === next.spectrumLevels
+    && prev.spectrumBins === next.spectrumBins
+    && prev.bpm === next.bpm
+    && prev.masterFx === next.masterFx
+    && prev.blackout === next.blackout
+    && prev.showOverlays === next.showOverlays
+    && prev.markSlotFailed === next.markSlotFailed
+    && prev.enablePreload === next.enablePreload
+    && prev.energyState === next.energyState
+    && prev.energyIntensity === next.energyIntensity
+    && prev.smoothedEnergyFx === next.smoothedEnergyFx
+    && prev.energyFxMapping === next.energyFxMapping
+    && prev.energyStrobeCount === next.energyStrobeCount
+    && prev.energySystemEnabled === next.energySystemEnabled
+    && prev.smoothedDropFx === next.smoothedDropFx
+    && prev.dropStrobeCount === next.dropStrobeCount
+    && prev.generatedQualityMode === next.generatedQualityMode
+    && prev.generatedMaxFps === next.generatedMaxFps
+    && prev.performanceOutputMode === next.performanceOutputMode
+  )
+}
+
+export default memo(OutputPreview, areOutputPreviewPropsEqual)

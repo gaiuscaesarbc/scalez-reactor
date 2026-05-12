@@ -75,8 +75,8 @@ function QuickBtn({ slot, layerIndex, isActive, onTrigger }) {
     <button
       type="button"
       className={cls}
-      disabled={isEmpty || hasError}
-      onClick={() => !isEmpty && !hasError && onTrigger(layerIndex, slot.slotIndex)}
+      disabled={isEmpty || hasError || typeof onTrigger !== 'function'}
+      onClick={() => !isEmpty && !hasError && onTrigger?.(layerIndex, slot.slotIndex)}
       title={slot.clipName || (isEmpty ? 'Empty' : 'Error')}
     >
       {thumb

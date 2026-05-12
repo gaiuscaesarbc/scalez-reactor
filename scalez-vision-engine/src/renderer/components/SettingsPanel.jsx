@@ -52,6 +52,7 @@ export default memo(function SettingsPanel({
     energySystemEnabled = true,
     autoEvolutionEnabled = false,
     autoEvolutionInterval = 60,
+    performanceOutputMode = true,
   } = settings
 
   const {
@@ -64,6 +65,7 @@ export default memo(function SettingsPanel({
     setEnergySystemEnabled = () => {},
     setAutoEvolutionEnabled = () => {},
     setAutoEvolutionInterval = () => {},
+    setPerformanceOutputMode = () => {},
   } = actions
 
   if (!isOpen) {
@@ -291,6 +293,15 @@ export default memo(function SettingsPanel({
                 type="checkbox"
                 checked={safeMode}
                 onChange={(e) => setSafeMode(e.target.checked)}
+              />
+            </div>
+
+            <div className="settings-row">
+              <label className="settings-label">Performance Output Mode</label>
+              <input
+                type="checkbox"
+                checked={performanceOutputMode}
+                onChange={(e) => setPerformanceOutputMode(e.target.checked)}
               />
             </div>
 

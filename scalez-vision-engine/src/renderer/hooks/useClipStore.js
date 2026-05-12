@@ -1,9 +1,276 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadStore, saveStore } from '../utils/storage'
+import { GENERATED_CLIP_PRESETS } from '../generatedClips/generatedClipPresets'
 
 const LAYER_COUNT = 3
 const SLOT_COUNT = 50
 const LIKELY_UNSUPPORTED_EXTENSIONS = new Set(['mov', 'avi', 'mkv'])
+const SHOWS_STORAGE_KEY = 'scalez_shows'
+const LAST_SHOW_STORAGE_KEY = 'scalez_last_show'
+const AUTOSAVE_STORAGE_KEY = 'scalez_autosave'
+const MIDI_MAPPINGS_STORAGE_KEY = 'scalez_midi_mappings'
+const LEGACY_SHOWS_STORAGE_KEYS = [
+  'scalez_shows',
+  'scalez.shows',
+  'scalez-shows',
+  'scalezVisionShows',
+  'scalez_vision_shows',
+  'shows',
+]
+
+function parseStoredJson(rawValue, fallbackValue) {
+  if (rawValue == null || rawValue === '') {
+    return fallbackValue
+  }
+
+  const tryParse = (value) => {
+    if (typeof value !== 'string') {
+      return value
+    }
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  }
+
+  try {
+    let parsed = JSON.parse(rawValue)
+    // Legacy builds may have stored JSON as a stringified JSON string.
+    for (let depth = 0; depth < 3; depth += 1) {
+      if (typeof parsed !== 'string') {
+        break
+      }
+      const trimmed = parsed.trim()
+      if (!trimmed || !['{', '[', '"'].includes(trimmed[0])) {
+        break
+      }
+      const nextParsed = tryParse(trimmed)
+      if (nextParsed === parsed) {
+        break
+      }
+      parsed = nextParsed
+    }
+    return parsed
+  } catch {
+    return fallbackValue
+  }
+}
+
+function normalizeShowName(value) {
+  if (typeof value !== 'string') {
+    return ''
+  }
+  return value.trim()
+}
+
+function isSameShowName(left, right) {
+  const a = normalizeShowName(left)
+  const b = normalizeShowName(right)
+  if (!a || !b) {
+    return false
+  }
+  return a.toLowerCase() === b.toLowerCase()
+}
+
+function isShowLikeEntry(value) {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && Array.isArray(value.layers)
+    && value.layers.length > 0
+  )
+}
+
+function readShowsFromStorage() {
+  const seenByName = new Map()
+
+  const registerEntry = (entry, fallbackName = '') => {
+    if (!isShowLikeEntry(entry)) {
+      return
+    }
+
+    const normalizedName = normalizeShowName(entry.name || fallbackName)
+    if (!normalizedName) {
+      return
+    }
+
+    const current = seenByName.get(normalizedName)
+    const currentTs = Date.parse(current?.timestamp || 0)
+    const nextTs = Date.parse(entry?.timestamp || 0)
+    if (!current || nextTs >= currentTs) {
+      seenByName.set(normalizedName, {
+        ...entry,
+        name: normalizedName,
+      })
+    }
+  }
+
+  const registerParsed = (parsedValue, sourceKey = '') => {
+    if (!parsedValue) {
+      return
+    }
+
+    if (Array.isArray(parsedValue)) {
+      parsedValue.forEach((entry, index) => {
+        registerEntry(entry, `${sourceKey} #${index + 1}`)
+      })
+      return
+    }
+
+    if (typeof parsedValue !== 'object') {
+      return
+    }
+
+    if (Array.isArray(parsedValue.shows)) {
+      parsedValue.shows.forEach((entry, index) => {
+        registerEntry(entry, `${sourceKey} show ${index + 1}`)
+      })
+    }
+
+    if (isShowLikeEntry(parsedValue)) {
+      registerEntry(parsedValue, sourceKey)
+    }
+
+    Object.entries(parsedValue).forEach(([key, value]) => {
+      if (key === 'shows' && Array.isArray(value)) {
+        return
+      }
+      registerEntry(value, key)
+    })
+  }
+
+  LEGACY_SHOWS_STORAGE_KEYS.forEach((key) => {
+    const parsed = parseStoredJson(localStorage.getItem(key), null)
+    registerParsed(parsed, key)
+  })
+
+  // Recovery pass: scan all localStorage keys for show-like payloads.
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i)
+    if (!key) {
+      continue
+    }
+    const parsed = parseStoredJson(localStorage.getItem(key), null)
+    registerParsed(parsed, key)
+  }
+
+  const combined = Array.from(seenByName.values())
+  if (combined.length > 0) {
+    writeShowsToStorage(combined)
+  }
+  return combined
+}
+
+function writeShowsToStorage(shows) {
+  localStorage.setItem(SHOWS_STORAGE_KEY, JSON.stringify(shows))
+}
+
+function readLastShowName() {
+  const candidates = [
+    LAST_SHOW_STORAGE_KEY,
+    'scalez.last_show',
+    'scalez-last-show',
+    'scalezLastShow',
+  ]
+
+  for (const key of candidates) {
+    const value = normalizeShowName(localStorage.getItem(key) || '')
+    if (value) {
+      return value
+    }
+  }
+
+  return ''
+}
+
+function findShowByName(shows, showName) {
+  const requested = normalizeShowName(showName)
+  if (!requested) {
+    return null
+  }
+
+  const exact = shows.find((entry) => normalizeShowName(entry?.name) === requested)
+  if (exact) {
+    return exact
+  }
+
+  return (
+    shows.find(
+      (entry) => normalizeShowName(entry?.name).toLowerCase() === requested.toLowerCase(),
+    ) || null
+  )
+}
+
+function pruneShowFromParsedValue(parsedValue, sourceKey, targetName) {
+  if (parsedValue == null) {
+    return { changed: false, deleteKey: false, nextValue: parsedValue }
+  }
+
+  if (Array.isArray(parsedValue)) {
+    const nextArray = parsedValue.filter((entry) => {
+      if (!isShowLikeEntry(entry)) {
+        return true
+      }
+      const entryName = normalizeShowName(entry.name)
+      return !isSameShowName(entryName, targetName)
+    })
+    return {
+      changed: nextArray.length !== parsedValue.length,
+      deleteKey: nextArray.length === 0,
+      nextValue: nextArray,
+    }
+  }
+
+  if (typeof parsedValue !== 'object') {
+    return { changed: false, deleteKey: false, nextValue: parsedValue }
+  }
+
+  if (isShowLikeEntry(parsedValue)) {
+    const entryName = normalizeShowName(parsedValue.name || sourceKey)
+    if (isSameShowName(entryName, targetName)) {
+      return { changed: true, deleteKey: true, nextValue: null }
+    }
+    return { changed: false, deleteKey: false, nextValue: parsedValue }
+  }
+
+  let changed = false
+  const nextObject = { ...parsedValue }
+
+  if (Array.isArray(parsedValue.shows)) {
+    const nextShows = parsedValue.shows.filter((entry) => {
+      if (!isShowLikeEntry(entry)) {
+        return true
+      }
+      return !isSameShowName(entry.name, targetName)
+    })
+    if (nextShows.length !== parsedValue.shows.length) {
+      changed = true
+      nextObject.shows = nextShows
+    }
+  }
+
+  Object.entries(parsedValue).forEach(([key, value]) => {
+    if (key === 'shows') {
+      return
+    }
+    if (!isShowLikeEntry(value)) {
+      return
+    }
+    const entryName = normalizeShowName(value.name || key)
+    if (isSameShowName(entryName, targetName)) {
+      delete nextObject[key]
+      changed = true
+    }
+  })
+
+  const hasValues = Object.keys(nextObject).length > 0
+  return {
+    changed,
+    deleteKey: !hasValues,
+    nextValue: nextObject,
+  }
+}
 
 function toMediaUrl(filePath) {
   if (!filePath) {
@@ -123,6 +390,7 @@ function makeDefaultSlot(slotIndex) {
     slotIndex,
     clipName: '',
     filePath: '',
+    type: 'video',
     status: 'empty',
     errorMessage: '',
     preloadedVideoRef: null,
@@ -130,7 +398,68 @@ function makeDefaultSlot(slotIndex) {
   }
 }
 
+function makeGeneratedClipSlot(slotIndex, generatedClip) {
+  return {
+    slotIndex,
+    id: generatedClip.id,
+    clipName: generatedClip.name,
+    filePath: '',
+    type: 'generated',
+    generatorType: generatedClip.generatorType,
+    status: 'loaded',
+    errorMessage: '',
+    preloadedVideoRef: null,
+    clipBpm: generatedClip.settings?.bpm || 140,
+    generatedClip,
+  }
+}
+
+function findGeneratedClipFromStoredSlot(storedSlot) {
+  if (!storedSlot || storedSlot.type !== 'generated') {
+    return null
+  }
+  if (storedSlot.id) {
+    return GENERATED_CLIP_PRESETS.find((clip) => clip.id === storedSlot.id) || null
+  }
+  if (storedSlot.generatorType) {
+    return (
+      GENERATED_CLIP_PRESETS.find((clip) => clip.generatorType === storedSlot.generatorType) || null
+    )
+  }
+  return null
+}
+
+function findGeneratedClipFromLegacySlot(storedSlot) {
+  if (!storedSlot) {
+    return null
+  }
+  if (storedSlot.filePath) {
+    return null
+  }
+  if (storedSlot.status !== 'loaded') {
+    return null
+  }
+  if (!storedSlot.clipName) {
+    return null
+  }
+  return GENERATED_CLIP_PRESETS.find((clip) => clip.name === storedSlot.clipName) || null
+}
+
 function makeDefaultLayer(layerIndex) {
+  const slots = []
+
+  // Seed first N slots with generated clips.
+  GENERATED_CLIP_PRESETS.forEach((generatedClip, index) => {
+    if (index < GENERATED_CLIP_PRESETS.length) {
+      slots.push(makeGeneratedClipSlot(index, generatedClip))
+    }
+  })
+
+  // Remaining slots: empty video slots
+  for (let i = slots.length; i < SLOT_COUNT; i++) {
+    slots.push(makeDefaultSlot(i))
+  }
+
   return {
     layerIndex,
     label: `L${layerIndex + 1}`,
@@ -138,7 +467,7 @@ function makeDefaultLayer(layerIndex) {
     opacity: 1,
     blendMode: 'normal',
     activeSlotIndex: null,
-    slots: Array.from({ length: SLOT_COUNT }, (_, slotIndex) => makeDefaultSlot(slotIndex)),
+    slots,
   }
 }
 
@@ -159,10 +488,54 @@ function normalizeStore(stored) {
       if (!storedSlot) {
         return slot
       }
+      
+      // Preserve generated clip metadata if present
+      if (storedSlot.type === 'generated') {
+        const generatedClip = findGeneratedClipFromStoredSlot(storedSlot)
+        if (generatedClip) {
+          return {
+            ...slot,
+            id: generatedClip.id,
+            clipName: generatedClip.name,
+            filePath: '',
+            type: 'generated',
+            generatorType: generatedClip.generatorType,
+            status: 'loaded',
+            errorMessage: '',
+            preloadedVideoRef: null,
+            clipBpm: typeof storedSlot.clipBpm === 'number' && storedSlot.clipBpm >= 20 ? storedSlot.clipBpm : (generatedClip.settings?.bpm || 140),
+            generatedClip,
+          }
+        }
+      }
+
+      // Backward compatibility: old saved data may contain generated clip names
+      // without type/id metadata. Recover those slots when possible.
+      const legacyGeneratedClip = findGeneratedClipFromLegacySlot(storedSlot)
+      if (legacyGeneratedClip) {
+        return {
+          ...slot,
+          id: legacyGeneratedClip.id,
+          clipName: legacyGeneratedClip.name,
+          filePath: '',
+          type: 'generated',
+          generatorType: legacyGeneratedClip.generatorType,
+          status: 'loaded',
+          errorMessage: '',
+          preloadedVideoRef: null,
+          clipBpm:
+            typeof storedSlot.clipBpm === 'number' && storedSlot.clipBpm >= 20
+              ? storedSlot.clipBpm
+              : (legacyGeneratedClip.settings?.bpm || 140),
+          generatedClip: legacyGeneratedClip,
+        }
+      }
+
       return {
         ...slot,
         clipName: storedSlot.clipName || '',
         filePath: storedSlot.filePath || '',
+        type: storedSlot.type || 'video',
         status: storedSlot.status || 'empty',
         errorMessage: storedSlot.errorMessage || '',
         preloadedVideoRef: null,
@@ -562,8 +935,13 @@ export function useClipStore() {
   }
 
   const saveShow = (showName, midiMappings_, appSettings) => {
+    const normalizedShowName = normalizeShowName(showName)
+    if (!normalizedShowName) {
+      return null
+    }
+
     const showData = {
-      name: showName,
+      name: normalizedShowName,
       timestamp: new Date().toISOString(),
       layers: layers.map((layer) => ({
         label: layer.label,
@@ -572,37 +950,33 @@ export function useClipStore() {
         blendMode: layer.blendMode,
         activeSlotIndex: layer.activeSlotIndex,
         slots: layer.slots.map((slot) => ({
+          id: slot.id || null,
+          type: slot.type || 'video',
+          generatorType: slot.generatorType || null,
           clipName: slot.clipName,
           filePath: slot.filePath,
           status: slot.status,
+          clipBpm: slot.clipBpm,
         })),
       })),
       midiMappings: midiMappings_ || midiMappings || {},
       appSettings: appSettings || null,
     }
-    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
-    const existingIdx = shows.findIndex((s) => s.name === showName)
+    const shows = readShowsFromStorage()
+    const existingIdx = shows.findIndex((s) => normalizeShowName(s?.name) === normalizedShowName)
     if (existingIdx >= 0) {
       shows[existingIdx] = showData
     } else {
       shows.push(showData)
     }
-    localStorage.setItem('scalez_shows', JSON.stringify(shows))
-    localStorage.setItem('scalez_last_show', showName)
+    writeShowsToStorage(shows)
+    localStorage.setItem(LAST_SHOW_STORAGE_KEY, normalizedShowName)
     return showData
   }
 
   const autosaveShow = (midiMappings_, appSettings) => {
     const autosaveName = '__autosave__'
-    const existingAutosaveRaw = localStorage.getItem('scalez_autosave')
-    let existingAutosave = null
-    if (existingAutosaveRaw) {
-      try {
-        existingAutosave = JSON.parse(existingAutosaveRaw)
-      } catch {
-        existingAutosave = null
-      }
-    }
+    const existingAutosave = parseStoredJson(localStorage.getItem(AUTOSAVE_STORAGE_KEY), null)
 
     const showData = {
       name: autosaveName,
@@ -614,9 +988,13 @@ export function useClipStore() {
         blendMode: layer.blendMode,
         activeSlotIndex: layer.activeSlotIndex,
         slots: layer.slots.map((slot) => ({
+          id: slot.id || null,
+          type: slot.type || 'video',
+          generatorType: slot.generatorType || null,
           clipName: slot.clipName,
           filePath: slot.filePath,
           status: slot.status,
+          clipBpm: slot.clipBpm,
         })),
       })),
       midiMappings: midiMappings_ || midiMappings || {},
@@ -625,12 +1003,12 @@ export function useClipStore() {
           ? appSettings
           : (existingAutosave?.appSettings ?? null),
     }
-    localStorage.setItem('scalez_autosave', JSON.stringify(showData))
+    localStorage.setItem(AUTOSAVE_STORAGE_KEY, JSON.stringify(showData))
   }
 
   const applyShowData = (showData) => {
     if (!showData || !Array.isArray(showData.layers)) {
-      return { ok: false, appSettings: null }
+      return { ok: false, appSettings: null, midiMappings: {} }
     }
 
     updateLayers((current) =>
@@ -640,13 +1018,60 @@ export function useClipStore() {
 
         const slots = layer.slots.map((slot, idx) => {
           const showSlot = showLayer.slots[idx]
+          if (showSlot?.type === 'generated') {
+            const generatedClip = findGeneratedClipFromStoredSlot(showSlot)
+            if (generatedClip) {
+              return {
+                ...slot,
+                id: generatedClip.id,
+                clipName: generatedClip.name,
+                filePath: '',
+                type: 'generated',
+                generatorType: generatedClip.generatorType,
+                status: showSlot.status || 'loaded',
+                errorMessage: '',
+                clipBpm:
+                  typeof showSlot.clipBpm === 'number' && showSlot.clipBpm >= 20
+                    ? showSlot.clipBpm
+                    : (generatedClip.settings?.bpm || 140),
+                generatedClip,
+              }
+            }
+          }
+
+          const legacyGeneratedClip = findGeneratedClipFromLegacySlot(showSlot)
+          if (legacyGeneratedClip) {
+            return {
+              ...slot,
+              id: legacyGeneratedClip.id,
+              clipName: legacyGeneratedClip.name,
+              filePath: '',
+              type: 'generated',
+              generatorType: legacyGeneratedClip.generatorType,
+              status: showSlot.status || 'loaded',
+              errorMessage: '',
+              clipBpm:
+                typeof showSlot.clipBpm === 'number' && showSlot.clipBpm >= 20
+                  ? showSlot.clipBpm
+                  : (legacyGeneratedClip.settings?.bpm || 140),
+              generatedClip: legacyGeneratedClip,
+            }
+          }
+
           return showSlot
             ? {
                 ...slot,
+                id: showSlot.id || slot.id,
+                type: showSlot.type || slot.type,
+                generatorType: showSlot.generatorType || slot.generatorType,
                 clipName: showSlot.clipName,
                 filePath: showSlot.filePath,
                 status: showSlot.status,
                 errorMessage: '',
+                clipBpm:
+                  typeof showSlot.clipBpm === 'number' && showSlot.clipBpm >= 20
+                    ? showSlot.clipBpm
+                    : slot.clipBpm,
               }
             : slot
         })
@@ -670,26 +1095,82 @@ export function useClipStore() {
     }
 
     void revalidateImportedSlots(showData.layers)
-    return { ok: true, appSettings: showData.appSettings || null }
+    return {
+      ok: true,
+      appSettings: showData.appSettings || null,
+      midiMappings: showData.midiMappings || {},
+    }
+  }
+
+  // Persist MIDI mappings independently of show saves for immediate restoration
+  const persistMidiMappings = (mappings) => {
+    if (mappings && typeof mappings === 'object') {
+      localStorage.setItem(MIDI_MAPPINGS_STORAGE_KEY, JSON.stringify(mappings))
+    }
+  }
+
+  // Restore MIDI mappings from independent storage
+  const restoreMidiMappings = () => {
+    const stored = parseStoredJson(localStorage.getItem(MIDI_MAPPINGS_STORAGE_KEY), {})
+    if (stored && typeof stored === 'object') {
+      setMidiMappings(stored)
+      return stored
+    }
+    return {}
+  }
+
+  const applySceneComposition = (sceneLayers = []) => {
+    updateLayers((current) =>
+      current.map((layer) => {
+        const sceneLayer = sceneLayers.find((entry) => entry.targetLayerIndex === layer.layerIndex)
+        if (!sceneLayer) {
+          return layer
+        }
+
+        const nextVisible = sceneLayer.visible !== false
+        const nextOpacity = typeof sceneLayer.opacity === 'number' ? sceneLayer.opacity : layer.opacity
+        const nextBlendMode = sceneLayer.blendMode || layer.blendMode
+
+        let activeSlotIndex = nextVisible ? layer.activeSlotIndex : null
+        let nextSlots = layer.slots
+
+        if (sceneLayer.clip?.filePath) {
+          const existingSlot = layer.slots.find((slot) => slot.filePath === sceneLayer.clip.filePath)
+          const targetSlotIndex = existingSlot ? existingSlot.slotIndex : 0
+          nextSlots = layer.slots.map((slot) => {
+            if (slot.slotIndex !== targetSlotIndex) {
+              return slot
+            }
+            return {
+              ...slot,
+              clipName: sceneLayer.clip.clipName || slot.clipName,
+              filePath: sceneLayer.clip.filePath,
+              status: 'loaded',
+              errorMessage: '',
+            }
+          })
+          activeSlotIndex = targetSlotIndex
+        }
+
+        return {
+          ...layer,
+          visible: nextVisible,
+          opacity: nextOpacity,
+          blendMode: nextBlendMode,
+          activeSlotIndex,
+          slots: nextSlots,
+        }
+      }),
+    )
   }
 
   const restoreLastShow = () => {
-    const lastShowName = localStorage.getItem('scalez_last_show')
-    const autosaveRaw = localStorage.getItem('scalez_autosave')
-
-    let autosaveData = null
-    if (autosaveRaw) {
-      try {
-        autosaveData = JSON.parse(autosaveRaw)
-      } catch {
-        autosaveData = null
-      }
-    }
-
-    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
+    const lastShowName = readLastShowName()
+    const autosaveData = parseStoredJson(localStorage.getItem(AUTOSAVE_STORAGE_KEY), null)
+    const shows = readShowsFromStorage()
     const lastShowData =
       lastShowName && lastShowName !== '__autosave__'
-        ? shows.find((s) => s.name === lastShowName)
+        ? findShowByName(shows, lastShowName)
         : null
 
     const autosaveTs = autosaveData?.timestamp ? Date.parse(autosaveData.timestamp) : Number.NaN
@@ -704,36 +1185,175 @@ export function useClipStore() {
       return applyShowData(lastShowData)
     }
 
-    return { ok: false, appSettings: null }
+    return { ok: false, appSettings: null, midiMappings: {} }
   }
 
   const loadShow = (showName) => {
-    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
-    const show = shows.find((s) => s.name === showName)
-    if (!show) return false
+    const requested = normalizeShowName(showName)
+    if (requested.toLowerCase() === '__autosave__' || requested.toLowerCase() === 'autosave') {
+      const autosave = parseStoredJson(localStorage.getItem(AUTOSAVE_STORAGE_KEY), null)
+      if (!isShowLikeEntry(autosave)) {
+        return { ok: false, appSettings: null, midiMappings: {} }
+      }
+      localStorage.setItem(LAST_SHOW_STORAGE_KEY, '__autosave__')
+      return applyShowData(autosave)
+    }
 
-    localStorage.setItem('scalez_last_show', showName)
+    const shows = readShowsFromStorage()
+    const show = findShowByName(shows, showName)
+    if (!show) return { ok: false, appSettings: null, midiMappings: {} }
+
+    localStorage.setItem(LAST_SHOW_STORAGE_KEY, normalizeShowName(show.name))
     return applyShowData(show)
   }
 
   const getSavedShows = () => {
-    return JSON.parse(localStorage.getItem('scalez_shows') || '[]')
+    const shows = [...readShowsFromStorage()]
+    const autosave = parseStoredJson(localStorage.getItem(AUTOSAVE_STORAGE_KEY), null)
+    if (isShowLikeEntry(autosave)) {
+      shows.push({
+        ...autosave,
+        name: '__autosave__',
+      })
+    }
+
+    return shows.sort((a, b) => {
+      const left = Date.parse(b?.timestamp || 0)
+      const right = Date.parse(a?.timestamp || 0)
+      const safeLeft = Number.isFinite(left) ? left : 0
+      const safeRight = Number.isFinite(right) ? right : 0
+      return safeLeft - safeRight
+    })
   }
 
   const deleteShow = (showName) => {
-    const shows = JSON.parse(localStorage.getItem('scalez_shows') || '[]')
-    const filtered = shows.filter((s) => s.name !== showName)
-    localStorage.setItem('scalez_shows', JSON.stringify(filtered))
+    const target = normalizeShowName(showName)
+    if (!target) {
+      return
+    }
+
+    const shows = readShowsFromStorage()
+    const filtered = shows.filter((s) => !isSameShowName(s?.name, target))
+    writeShowsToStorage(filtered)
+
+    // Also remove matching shows from legacy/recovered keys so they do not reappear.
+    const storageKeys = []
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (key) {
+        storageKeys.push(key)
+      }
+    }
+
+    storageKeys.forEach((key) => {
+      if (key === LAST_SHOW_STORAGE_KEY || key === MIDI_MAPPINGS_STORAGE_KEY) {
+        return
+      }
+
+      if (key === AUTOSAVE_STORAGE_KEY && isSameShowName(target, '__autosave__')) {
+        localStorage.removeItem(AUTOSAVE_STORAGE_KEY)
+        return
+      }
+
+      const rawValue = localStorage.getItem(key)
+      if (rawValue == null) {
+        return
+      }
+      const parsed = parseStoredJson(rawValue, null)
+      const result = pruneShowFromParsedValue(parsed, key, target)
+      if (!result.changed) {
+        return
+      }
+      if (result.deleteKey) {
+        localStorage.removeItem(key)
+      } else {
+        localStorage.setItem(key, JSON.stringify(result.nextValue))
+      }
+    })
+
+    const lastShowName = readLastShowName()
+    if (isSameShowName(lastShowName, target)) {
+      localStorage.removeItem(LAST_SHOW_STORAGE_KEY)
+    }
   }
 
-  // Autosave every 30 seconds
-  useEffect(() => {
-    const autosaveInterval = setInterval(() => {
-      autosaveShow()
-    }, 30000)
+  // Autosave is orchestrated from App with current MIDI mappings + app settings.
+  // Keeping a second local autosave loop here can overwrite mappings with stale data.
 
-    return () => clearInterval(autosaveInterval)
-  }, [layers])
+  const loadGeneratedClipIntoSlot = (layerIndex, slotIndex, generatedClip) => {
+    updateLayers((current) =>
+      current.map((layer) => {
+        if (layer.layerIndex !== layerIndex) {
+          return layer
+        }
+
+        const slots = layer.slots.map((slot) => {
+          if (slot.slotIndex !== slotIndex) {
+            return slot
+          }
+          return {
+            slotIndex,
+            id: generatedClip.id,
+            clipName: generatedClip.name,
+            filePath: '',
+            type: 'generated',
+            generatorType: generatedClip.generatorType,
+            status: 'loaded',
+            errorMessage: '',
+            preloadedVideoRef: null,
+            clipBpm: generatedClip.settings?.bpm || 140,
+            generatedClip,
+          }
+        })
+
+        return {
+          ...layer,
+          slots,
+          activeSlotIndex: slotIndex,
+        }
+      }),
+    )
+  }
+
+  const loadGeneratedPackToLayer = (layerIndex) => {
+    updateLayers((current) =>
+      current.map((layer) => {
+        if (layer.layerIndex !== layerIndex) {
+          return layer
+        }
+
+        const slots = layer.slots.map((slot) => {
+          if (slot.slotIndex < GENERATED_CLIP_PRESETS.length) {
+            return makeGeneratedClipSlot(slot.slotIndex, GENERATED_CLIP_PRESETS[slot.slotIndex])
+          }
+          return slot
+        })
+
+        return {
+          ...layer,
+          slots,
+        }
+      }),
+    )
+  }
+
+  const loadGeneratedPackToAllLayers = () => {
+    updateLayers((current) =>
+      current.map((layer) => {
+        const slots = layer.slots.map((slot) => {
+          if (slot.slotIndex < GENERATED_CLIP_PRESETS.length) {
+            return makeGeneratedClipSlot(slot.slotIndex, GENERATED_CLIP_PRESETS[slot.slotIndex])
+          }
+          return slot
+        })
+
+        return {
+          ...layer,
+          slots,
+        }
+      }),
+    )
+  }
 
   return {
     layers,
@@ -755,5 +1375,11 @@ export function useClipStore() {
     deleteShow,
     autosaveShow,
     restoreLastShow,
+    applySceneComposition,
+    loadGeneratedClipIntoSlot,
+    loadGeneratedPackToLayer,
+    loadGeneratedPackToAllLayers,
+    persistMidiMappings,
+    restoreMidiMappings,
   }
 }

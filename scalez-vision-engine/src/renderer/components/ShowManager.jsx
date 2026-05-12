@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 export default function ShowManager({
   savedShows,
@@ -7,27 +7,38 @@ export default function ShowManager({
   onLoadShow,
   onLoadDefaultScene,
   onDeleteShow,
+  onRefreshShows,
 }) {
+  const formatShowTimestamp = (timestamp) => {
+    const parsed = Date.parse(timestamp || '')
+    if (!Number.isFinite(parsed)) {
+      return 'Unknown save time'
+    }
+    const date = new Date(parsed)
+    return `${date.toLocaleDateString()} at ${date.toLocaleTimeString()}`
+  }
+
   const [isOpen, setIsOpen] = useState(false)
   const [showName, setShowName] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const nameInputRef = useRef(null)
 
   const handleSave = () => {
-    if (!showName.trim()) {
+    const normalizedShowName = showName.trim()
+    if (!normalizedShowName) {
       alert('Please enter a show name')
       return
     }
 
-    const existingShow = savedShows.find((s) => s.name === showName)
+    const existingShow = savedShows.find((s) => s.name?.trim() === normalizedShowName)
     if (existingShow) {
       const confirmed = window.confirm(
-        `Show "${showName}" already exists. Overwrite it?`,
+        `Show "${normalizedShowName}" already exists. Overwrite it?`,
       )
       if (!confirmed) return
     }
 
-    onSaveShow(showName)
+    onSaveShow(normalizedShowName)
     setShowName('')
     setIsOpen(false)
   }
@@ -68,19 +79,21 @@ export default function ShowManager({
     setDeleteConfirm(null)
   }
 
-  const loadItems = [
-    ...defaultScenes.map((scene) => ({
-      id: scene.id,
-      name: scene.name,
-      description: scene.description,
-      type: 'default',
-    })),
-    ...savedShows.map((show) => ({
-      ...show,
-      id: `saved-${show.name}`,
-      type: 'saved',
-    })),
-  ]
+  const groupedDefaultScenes = useMemo(() => {
+    const order = ['Calm', 'Build', 'Drop', 'Peak']
+    const buckets = order.map((energyProfile) => ({ energyProfile, scenes: [] }))
+
+    defaultScenes.forEach((scene) => {
+      const match = buckets.find((bucket) => bucket.energyProfile === scene.energyProfile)
+      if (match) {
+        match.scenes.push(scene)
+      } else {
+        buckets.push({ energyProfile: scene.energyProfile || 'Other', scenes: [scene] })
+      }
+    })
+
+    return buckets.filter((bucket) => bucket.scenes.length > 0)
+  }, [defaultScenes])
 
   return (
     <div className="show-manager">
@@ -88,8 +101,10 @@ export default function ShowManager({
         type="button"
         className="show-manager__toggle pill"
         onClick={() => {
-          setIsOpen(!isOpen)
-          if (!isOpen) {
+          const nextOpen = !isOpen
+          setIsOpen(nextOpen)
+          if (nextOpen) {
+            onRefreshShows?.()
             setTimeout(() => nameInputRef.current?.focus(), 0)
           }
         }}
@@ -136,52 +151,36 @@ export default function ShowManager({
               </div>
             </section>
 
-            {/* Load Section */}
+            {/* Saved Shows */}
             <section className="show-section">
-              <h4>Load Show</h4>
-              {loadItems.length === 0 ? (
-                <p className="show-empty">No scenes or saved shows yet</p>
+              <h4>Saved Shows</h4>
+              {savedShows.length === 0 ? (
+                <p className="show-empty">No saved shows yet</p>
               ) : (
                 <div className="show-list">
-                  {loadItems.map((item) => (
-                    <div key={item.id} className={`show-item${item.type === 'default' ? ' show-item--scene' : ''}`}>
+                  {savedShows.map((show) => (
+                    <div key={show.name} className="show-item">
                       <div className="show-item__info">
-                        <div className="show-item__name">
-                          {item.name}
-                          {item.type === 'default' ? ' · Built-in' : ''}
+                        <div className="show-item__name">{show.name}</div>
+                        <div className="show-item__time">
+                          {formatShowTimestamp(show.timestamp)}
                         </div>
-                        {item.type === 'default' ? (
-                          <div className="show-item__time">{item.description}</div>
-                        ) : (
-                          <div className="show-item__time">
-                            {new Date(item.timestamp).toLocaleDateString()} at{' '}
-                            {new Date(item.timestamp).toLocaleTimeString()}
-                          </div>
-                        )}
                       </div>
                       <div className="show-item__actions">
                         <button
                           type="button"
-                          className={`show-btn ${item.type === 'default' ? 'show-btn--scene' : 'show-btn--load'}`}
-                          onClick={() => {
-                            if (item.type === 'default') {
-                              handleLoadDefault(item)
-                            } else {
-                              handleLoad(item)
-                            }
-                          }}
+                          className="show-btn show-btn--load"
+                          onClick={() => handleLoad(show)}
                         >
                           Load
                         </button>
-                        {item.type === 'saved' && (
-                          <button
-                            type="button"
-                            className="show-btn show-btn--delete"
-                            onClick={() => handleDelete(item)}
-                          >
-                            🗑️
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          className="show-btn show-btn--delete"
+                          onClick={() => handleDelete(show)}
+                        >
+                          🗑️
+                        </button>
                       </div>
                     </div>
                   ))}

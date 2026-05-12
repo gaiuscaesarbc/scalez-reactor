@@ -23,6 +23,9 @@ const isDev = !app.isPackaged
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
 const openDevtoolsByDefault = process.env.SCALEZ_OPEN_DEVTOOLS === '1'
 
+// Keep control/output renderers responsive even when a window is minimized.
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+
 let controlWindow = null
 let outputWindow = null
 let reverseCacheDir = null
@@ -31,6 +34,9 @@ let windowStateCache = null
 const reverseCacheJobs = new Map()
 let nativePlaybackEngine = null
 let lastNativePlaybackSignature = ''
+let lastPerformanceOutputMode = true
+const PERFORMANCE_OUTPUT_LOCK_WIDTH = 1920
+const PERFORMANCE_OUTPUT_LOCK_HEIGHT = 1080
 let sharedOutputState = {
   layers: [],
   masterFx: {
@@ -43,6 +49,16 @@ let sharedOutputState = {
   audio: {
     bassLevel: 0.2,
   },
+  rendering: {
+    performanceOutputMode: true,
+  },
+  updatedAt: Date.now(),
+}
+let sharedOutputTelemetry = {
+  totalStallDetections: 0,
+  totalSoftRecoveries: 0,
+  lastRecoveryAt: 0,
+  health: 'Healthy',
   updatedAt: Date.now(),
 }
 
@@ -159,6 +175,43 @@ function clampBoundsToDisplay(bounds, minWidth, minHeight) {
   return { x, y, width, height }
 }
 
+function getOutputTargetDisplay(savedOutputState = {}) {
+  const allDisplays = screen.getAllDisplays()
+  const primaryDisplay = screen.getPrimaryDisplay()
+  if (!allDisplays.length) {
+    return primaryDisplay
+  }
+
+  const savedDisplayId = Number(savedOutputState?.displayId)
+  if (Number.isFinite(savedDisplayId)) {
+    const savedDisplay = allDisplays.find((display) => display.id === savedDisplayId)
+    if (savedDisplay) {
+      return savedDisplay
+    }
+  }
+
+  const controlDisplay = controlWindow && !controlWindow.isDestroyed()
+    ? screen.getDisplayMatching(controlWindow.getBounds())
+    : primaryDisplay
+
+  const secondary = allDisplays.find((display) => display.id !== controlDisplay?.id)
+  return secondary || primaryDisplay
+}
+
+function safelyApplyOutputDisplayBounds(windowRef, bounds, reason) {
+  if (!windowRef || windowRef.isDestroyed() || !bounds) {
+    return false
+  }
+
+  try {
+    windowRef.setBounds(bounds, false)
+    return true
+  } catch (error) {
+    console.warn(`[output:bounds-warning] failed reason=${reason || 'unknown'} message=${error?.message || 'unknown'}`)
+    return false
+  }
+}
+
 function getRestoredWindowBounds(windowKey, defaults, minWidth, minHeight) {
   const savedState = readWindowState()?.[windowKey]?.bounds || {}
   const sanitized = sanitizeBounds(savedState, defaults)
@@ -185,9 +238,11 @@ function persistLiveWindowBounds(windowRef, windowKey, supportsFullscreen = fals
   }
 
   const bounds = windowRef.isFullScreen() ? windowRef.getNormalBounds() : windowRef.getBounds()
+  const nearestDisplay = screen.getDisplayMatching(bounds)
   persistWindowState(windowKey, {
     bounds,
     isFullScreen: supportsFullscreen ? windowRef.isFullScreen() : false,
+    displayId: Number.isFinite(nearestDisplay?.id) ? nearestDisplay.id : undefined,
   })
 }
 
@@ -441,11 +496,13 @@ function createControlWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: false,
     },
   })
 
   bindWindowStatePersistence(controlWindow, 'control')
   loadRendererWindow(controlWindow, 'control')
+  controlWindow.webContents.openDevTools({ mode: 'detach' })
 
   controlWindow.on('closed', () => {
     controlWindow = null
@@ -471,9 +528,8 @@ function createOutputWindow() {
     Number.isFinite(savedOutputBounds.width) &&
     Number.isFinite(savedOutputBounds.height)
 
-  const allDisplays = screen.getAllDisplays()
   const primaryDisplay = screen.getPrimaryDisplay()
-  const secondary = allDisplays.find((d) => d.id !== primaryDisplay.id)
+  const targetDisplay = getOutputTargetDisplay(savedOutputState)
 
   // Determine which display the saved output position is on.
   const savedDisplay = Number.isFinite(bounds.x) && Number.isFinite(bounds.y)
@@ -485,11 +541,11 @@ function createOutputWindow() {
 
   let finalBounds = bounds
 
-  if (!hasSavedOutputBounds && secondary) {
+  if (!hasSavedOutputBounds && targetDisplay && targetDisplay.id !== primaryDisplay.id) {
     // Always open output on a different display than control.
     const outputIsOnControlDisplay = !savedDisplay || savedDisplay.id === controlDisplay.id
     if (outputIsOnControlDisplay) {
-      const wa = secondary.workArea
+      const wa = targetDisplay.workArea
       finalBounds = {
         x: wa.x,
         y: wa.y,
@@ -538,10 +594,19 @@ function createOutputWindow() {
   bindWindowStatePersistence(outputWindow, 'output', { supportsFullscreen: true })
   loadRendererWindow(outputWindow, 'output')
 
+  const displayBounds = targetDisplay?.bounds || finalBounds
+  if (!safelyApplyOutputDisplayBounds(outputWindow, displayBounds, 'create')) {
+    safelyApplyOutputDisplayBounds(outputWindow, finalBounds, 'create-fallback')
+  }
+
   if (savedOutputState.isFullScreen) {
     outputWindow.once('ready-to-show', () => {
       if (outputWindow && !outputWindow.isDestroyed()) {
-        outputWindow.setFullScreen(true)
+        try {
+          outputWindow.setFullScreen(true)
+        } catch (error) {
+          console.warn(`[output:fullscreen-warning] failed reason=create message=${error?.message || 'unknown'}`)
+        }
       }
     })
   }
@@ -564,7 +629,12 @@ function registerIpcHandlers() {
     }
 
     const nextState = !outputWindow.isFullScreen()
-    outputWindow.setFullScreen(nextState)
+    try {
+      outputWindow.setFullScreen(nextState)
+    } catch (error) {
+      console.warn(`[output:fullscreen-warning] failed reason=toggle message=${error?.message || 'unknown'}`)
+      return outputWindow.isFullScreen()
+    }
     return nextState
   })
 
@@ -573,7 +643,12 @@ function registerIpcHandlers() {
       return false
     }
 
-    outputWindow.setFullScreen(Boolean(shouldFullscreen))
+    try {
+      outputWindow.setFullScreen(Boolean(shouldFullscreen))
+    } catch (error) {
+      console.warn(`[output:fullscreen-warning] failed reason=set message=${error?.message || 'unknown'}`)
+      return outputWindow.isFullScreen()
+    }
     return outputWindow.isFullScreen()
   })
 
@@ -586,6 +661,14 @@ function registerIpcHandlers() {
     if (!Number.isFinite(w) || !Number.isFinite(h)) {
       return { ok: false, error: 'Invalid dimensions' }
     }
+    const performanceOutputMode = Boolean(sharedOutputState?.rendering?.performanceOutputMode)
+    if (performanceOutputMode) {
+      return {
+        ok: false,
+        error: `Performance Output Mode locks output to ${PERFORMANCE_OUTPUT_LOCK_WIDTH} x ${PERFORMANCE_OUTPUT_LOCK_HEIGHT}. Disable it to resize manually.`,
+      }
+    }
+
     outputWindow.setContentSize(w, h)
     return { ok: true, width: w, height: h }
   })
@@ -716,8 +799,23 @@ function registerIpcHandlers() {
       updatedAt: Date.now(),
     }
 
+    const performanceOutputMode = Boolean(sharedOutputState?.rendering?.performanceOutputMode)
+    const performanceModeChanged = performanceOutputMode !== lastPerformanceOutputMode
+    lastPerformanceOutputMode = performanceOutputMode
+
     if (outputWindow && !outputWindow.isDestroyed()) {
       outputWindow.webContents.send('output:state-update', sharedOutputState)
+
+      if (performanceOutputMode && performanceModeChanged) {
+        const targetDisplay = getOutputTargetDisplay(readWindowState()?.output || {})
+        const displayBounds = targetDisplay?.bounds
+        if (displayBounds) {
+          const applied = safelyApplyOutputDisplayBounds(outputWindow, displayBounds, 'performance-output-mode')
+          if (!applied) {
+            console.warn('[output:bounds-warning] fallback retained existing output window bounds.')
+          }
+        }
+      }
     }
 
     const nativeEngine = getNativePlaybackEngine()
@@ -735,6 +833,38 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('output:state-get', () => sharedOutputState)
+
+  ipcMain.on('output:telemetry-publish', (_event, telemetry) => {
+    if (!telemetry || typeof telemetry !== 'object') {
+      return
+    }
+
+    const nextTelemetry = {
+      totalStallDetections: Number.isFinite(telemetry.totalStallDetections)
+        ? Math.max(0, Math.round(telemetry.totalStallDetections))
+        : sharedOutputTelemetry.totalStallDetections,
+      totalSoftRecoveries: Number.isFinite(telemetry.totalSoftRecoveries)
+        ? Math.max(0, Math.round(telemetry.totalSoftRecoveries))
+        : sharedOutputTelemetry.totalSoftRecoveries,
+      lastRecoveryAt: Number.isFinite(telemetry.lastRecoveryAt)
+        ? Math.max(0, Math.round(telemetry.lastRecoveryAt))
+        : sharedOutputTelemetry.lastRecoveryAt,
+      health: ['Healthy', 'Recovering', 'Warning'].includes(telemetry.health)
+        ? telemetry.health
+        : sharedOutputTelemetry.health,
+      updatedAt: Date.now(),
+    }
+
+    sharedOutputTelemetry = nextTelemetry
+    if (controlWindow && !controlWindow.isDestroyed()) {
+      controlWindow.webContents.send('output:telemetry-update', sharedOutputTelemetry)
+    }
+    if (outputWindow && !outputWindow.isDestroyed()) {
+      outputWindow.webContents.send('output:telemetry-update', sharedOutputTelemetry)
+    }
+  })
+
+  ipcMain.handle('output:telemetry-get', () => sharedOutputTelemetry)
 
   ipcMain.handle('native-playback:get-status', () => {
     return getNativePlaybackEngine().getStatus()

@@ -7,10 +7,11 @@ const DEFAULT_BPM = 140
 export function useTapTempo() {
   const [bpm, setBpm] = useState(DEFAULT_BPM)
   const tapTimesRef = useRef([])
-  const lastTapTimeRef = useRef(typeof performance !== 'undefined' ? performance.now() : 0)  // exposed for beat-sync quantization
+  const lastTapTimeRef = useRef(0)  // exposed for beat-sync quantization
 
   const tap = useCallback(() => {
     const now = performance.now()
+    lastTapTimeRef.current = now
     const taps = tapTimesRef.current
 
     // Reset if too long since last tap

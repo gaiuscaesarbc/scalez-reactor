@@ -1,5 +1,13 @@
 import { useRef, useEffect, useState } from 'react'
 
+function hasMeaningfulFxChange(prev, next, epsilon = 0.01) {
+  return (
+    Math.abs((next.glowBoost ?? 0) - (prev.glowBoost ?? 0)) >= epsilon
+    || Math.abs((next.shakeIntensity ?? 0) - (prev.shakeIntensity ?? 0)) >= epsilon
+    || Math.abs((next.brightnessBoost ?? 0) - (prev.brightnessBoost ?? 0)) >= epsilon
+  )
+}
+
 /**
  * Energy FX Smoother: Applies lerp to prevent visual snapping
  * Smoothly transitions energy FX changes over time
@@ -26,7 +34,10 @@ export function useEnergyFxSmoother({
   useEffect(() => {
     if (!enabled) {
       smoothedRef.current = { glowBoost: 0, shakeIntensity: 0, brightnessBoost: 0 }
-      setSmoothedValues({ glowBoost: 0, shakeIntensity: 0, brightnessBoost: 0 })
+      setSmoothedValues((current) => {
+        const reset = { glowBoost: 0, shakeIntensity: 0, brightnessBoost: 0 }
+        return hasMeaningfulFxChange(current, reset, 0.0001) ? reset : current
+      })
       return
     }
 
@@ -41,7 +52,10 @@ export function useEnergyFxSmoother({
       smoothedRef.current.brightnessBoost * (1 - lerpFactor) +
       brightnessBoost * lerpFactor
 
-    setSmoothedValues({ ...smoothedRef.current })
+    setSmoothedValues((current) => {
+      const next = { ...smoothedRef.current }
+      return hasMeaningfulFxChange(current, next) ? next : current
+    })
   }, [glowBoost, shakeIntensity, brightnessBoost, lerpFactor, enabled])
 
   return smoothedValues

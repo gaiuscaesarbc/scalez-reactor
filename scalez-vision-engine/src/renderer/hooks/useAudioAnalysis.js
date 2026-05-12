@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 function getAudioContextClass() {
   return window.AudioContext || window.webkitAudioContext || null
@@ -103,9 +103,11 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
   const smoothedSpectrumRef = useRef({ full: 0, sub: 0, low: 0, lowMid: 0, mid: 0, presence: 0, high: 0 })
   const smoothedBinsRef = useRef(null)
   const lastPublishedAtRef = useRef(0)
+  const lastPublishedFrameRef = useRef(null)
   const eqGainsRef = useRef(eqGains)
   const noiseFloorRef = useRef(noiseFloor)
   const preGainRef = useRef(preGain)
+  const lastAnalyzeAtRef = useRef(0)
   const isAnalyzingRef = useRef(false)
   const startInFlightRef = useRef(false)
   const [audioDevices, setAudioDevices] = useState([])
@@ -114,6 +116,8 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
   const UI_PUBLISH_FPS = PERFORMANCE_MODE ? 24 : 30
   const UI_PUBLISH_INTERVAL_MS = 1000 / UI_PUBLISH_FPS
   const BIN_COUNT = PERFORMANCE_MODE ? 64 : 96
+  const ANALYSIS_TARGET_FPS = PERFORMANCE_MODE ? 72 : 96
+  const ANALYSIS_MIN_INTERVAL_MS = 1000 / ANALYSIS_TARGET_FPS
 
   const getFrequencyRangeAverage = (dataArray, sampleRate, fftSize, minFrequency, maxFrequency) => {
     if (!dataArray?.length || !sampleRate || !fftSize) {
@@ -180,15 +184,53 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
     }
   }, [smoothing])
 
-  function stopAnalysisLoop() {
+  const stopAnalysisLoop = useCallback(() => {
     isAnalyzingRef.current = false
     if (animFrameRef.current !== null) {
       cancelAnimationFrame(animFrameRef.current)
       animFrameRef.current = null
     }
-  }
+  }, [])
 
-  const startAudio = async () => {
+  const shouldPublishFrame = useCallback((nextFrame) => {
+    const previous = lastPublishedFrameRef.current
+    if (!previous) {
+      return true
+    }
+
+    if (Math.abs((nextFrame.bassLevel || 0) - (previous.bassLevel || 0)) >= 0.003) {
+      return true
+    }
+
+    const prevSpectrum = previous.spectrumLevels || {}
+    const nextSpectrum = nextFrame.spectrumLevels || {}
+    const spectrumKeys = ['sub', 'low', 'lowMid', 'mid', 'presence', 'high', 'full']
+    for (let i = 0; i < spectrumKeys.length; i += 1) {
+      const key = spectrumKeys[i]
+      if (Math.abs((nextSpectrum[key] || 0) - (prevSpectrum[key] || 0)) >= 0.003) {
+        return true
+      }
+    }
+
+    const prevBins = previous.spectrumBins || []
+    const nextBins = nextFrame.spectrumBins || []
+    if (prevBins.length !== nextBins.length) {
+      return true
+    }
+    if (nextBins.length > 0) {
+      const checkpoints = [0, Math.floor(nextBins.length * 0.33), Math.floor(nextBins.length * 0.66), nextBins.length - 1]
+      for (let i = 0; i < checkpoints.length; i += 1) {
+        const idx = checkpoints[i]
+        if (Math.abs((nextBins[idx] || 0) - (prevBins[idx] || 0)) >= 0.010) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }, [])
+
+  const startAudio = useCallback(async () => {
     if (startInFlightRef.current) {
       return
     }
@@ -252,6 +294,8 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
       perfWindowStartRef.current = 0
       perfInternalFramesRef.current = 0
       perfUiPublishesRef.current = 0
+      lastPublishedFrameRef.current = null
+      lastAnalyzeAtRef.current = 0
 
       setIsActive(true)
       startAnalysis()
@@ -281,9 +325,9 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
     } finally {
       startInFlightRef.current = false
     }
-  }
+  }, [deviceId, smoothing, stopAnalysisLoop])
 
-  const stopAudio = async () => {
+  const stopAudio = useCallback(async () => {
     stopAnalysisLoop()
 
     if (micSourceRef.current) {
@@ -312,9 +356,11 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
     smoothedBassRef.current = 0
     smoothedSpectrumRef.current = { full: 0, sub: 0, low: 0, lowMid: 0, mid: 0, presence: 0, high: 0 }
     smoothedBinsRef.current = null
+    lastPublishedFrameRef.current = null
+    lastAnalyzeAtRef.current = 0
     setAudioError('')
     setIsActive(false)
-  }
+  }, [stopAnalysisLoop])
 
   function startAnalysis() {
     if (isAnalyzingRef.current) {
@@ -327,6 +373,14 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
       if (!isAnalyzingRef.current || !analyzerRef.current || !dataArrayRef.current) {
         return
       }
+
+      const now = performance.now()
+      const lastAnalyzeAt = lastAnalyzeAtRef.current || 0
+      if (lastAnalyzeAt > 0 && now - lastAnalyzeAt < ANALYSIS_MIN_INTERVAL_MS) {
+        animFrameRef.current = requestAnimationFrame(analyze)
+        return
+      }
+      lastAnalyzeAtRef.current = now
 
       analyzerRef.current.getByteFrequencyData(dataArrayRef.current)
 
@@ -420,7 +474,6 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
 
       perfInternalFramesRef.current += 1
 
-      const now = performance.now()
       if (uiPublishTimerRef.current === 0 || now - uiPublishTimerRef.current >= UI_PUBLISH_INTERVAL_MS) {
         uiPublishTimerRef.current = now
         perfUiPublishesRef.current += 1
@@ -428,12 +481,16 @@ export function useAudioAnalysis({ sensitivity = 1, smoothing = 0.8, eqGains = {
         // Coalesce all audio UI state into one update to avoid render thrash.
         const sampledBins = downsampleBins(smoothedBinsRef.current || [], BIN_COUNT)
         if (now - lastPublishedAtRef.current >= UI_PUBLISH_INTERVAL_MS * 0.8) {
-          setAudioFrame({
+          const nextFrame = {
             bassLevel: final,
             spectrumLevels: nextSpectrum,
             spectrumBins: sampledBins,
-          })
-          lastPublishedAtRef.current = now
+          }
+          if (shouldPublishFrame(nextFrame)) {
+            setAudioFrame(nextFrame)
+            lastPublishedFrameRef.current = nextFrame
+            lastPublishedAtRef.current = now
+          }
         }
       }
 

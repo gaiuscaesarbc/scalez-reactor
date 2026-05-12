@@ -25,6 +25,12 @@ export function useEnergyState({
   const [energyIntensity, setEnergyIntensity] = useState(0)
   const [energyMetrics, setEnergyMetrics] = useState({ rel: 1, shortAvg: 0, longAvg: 0, sectionScore: 0 })
   const lastIntensityRef = useRef(0)
+  const metricsRef = useRef({ rel: 1, shortAvg: 0, longAvg: 0, sectionScore: 0, flux01: 0, brightness: 0, bassRel: 0 })
+  // Refs for props that create new object/array references on every parent render.
+  // The main analysis effect reads from these refs instead of the props directly,
+  // avoiding "dependency changes on every render" infinite-loop errors.
+  const spectrumLevelsRef = useRef(spectrumLevels)
+  const spectrumBinsRef   = useRef(spectrumBins)
 
   // Short window: ~0.5s average (slightly slower than v1 to reduce noise)
   const shortAvgRef = useRef(0)
@@ -37,11 +43,12 @@ export function useEnergyState({
   const lastEnergyStateRef = useRef('calm')
   const lastPeakTimeRef = useRef(0)
   const prevShortAvgRef = useRef(0)
-  const startupTimeRef = useRef(Date.now())
+  const startupTimeRef = useRef(0)
   const silenceFramesRef = useRef(0)
 
   // Candidate frame counters — now decay (not hard reset) to prevent flickering
   const peakCandidateFramesRef = useRef(0)
+
   const buildCandidateFramesRef = useRef(0)
   const dropCandidateFramesRef = useRef(0)
 
@@ -51,6 +58,10 @@ export function useEnergyState({
   const brightnessRef = useRef(0.5)    // smoothed spectral brightness (upper-freq ratio)
   const bassShortRef = useRef(0)       // fast EMA of low band (~2-3 frames) for transient detection
   const bassLongRef = useRef(0)        // medium EMA of low band (~15 frames) baseline
+
+  // Keep spectrumLevels/spectrumBins refs in sync without triggering the main analysis.
+  useEffect(() => { spectrumLevelsRef.current = spectrumLevels }, [spectrumLevels])
+  useEffect(() => { spectrumBinsRef.current   = spectrumBins   }, [spectrumBins])
 
   // Minimum time each state must hold before it can transition away.
   // Much longer than v1 to kill rapid flickering.
@@ -83,6 +94,10 @@ export function useEnergyState({
   }
 
   useEffect(() => {
+    startupTimeRef.current = Date.now()
+  }, [])
+
+  useEffect(() => {
     if (!enabled) {
       resetAllRefs(Date.now())
       setEnergyState('calm')
@@ -93,10 +108,12 @@ export function useEnergyState({
     const now = Date.now()
 
     // Full mix for general energy; low band for drop/bass hits
-    const fullBand = spectrumLevels?.full ?? bassLevel
+    // Read from refs to avoid depending on object identity of the props.
+    const sl = spectrumLevelsRef.current
+    const fullBand = sl?.full ?? bassLevel
     const lowBand = Math.max(
-      spectrumLevels?.sub ?? 0,
-      spectrumLevels?.low ?? 0,
+      sl?.sub ?? 0,
+      sl?.low ?? 0,
       bassLevel,
     )
 
@@ -163,7 +180,7 @@ export function useEnergyState({
     // ── Spectral flux ─────────────────────────────────────────────────────────
     // Measures frame-to-frame change across all frequency bins.
     // High flux = onset, transient, drop hit. Low flux = sustained/calm.
-    const bins = Array.isArray(spectrumBins) ? spectrumBins : []
+    const bins = Array.isArray(spectrumBinsRef.current) ? spectrumBinsRef.current : []
     const prevBins = prevBinsRef.current
     let rawFlux = 0
     if (bins.length > 0 && prevBins?.length === bins.length) {
@@ -179,9 +196,9 @@ export function useEnergyState({
     // ── Spectral brightness ───────────────────────────────────────────────────
     // Ratio of upper-frequency energy (mid + presence + high) vs total.
     // Rises during builds; collapses when a drop hits heavy sub-bass.
-    const midBand      = spectrumLevels?.mid ?? 0
-    const presenceBand = spectrumLevels?.presence ?? 0
-    const highBand     = spectrumLevels?.high ?? 0
+    const midBand      = sl?.mid ?? 0
+    const presenceBand = sl?.presence ?? 0
+    const highBand     = sl?.high ?? 0
     const rawBrightness = (midBand + presenceBand + highBand) / (Math.max(fullBand, 0.01) * 3)
     const prevBrightness = brightnessRef.current
     brightnessRef.current = prevBrightness * 0.88 + rawBrightness * 0.12
@@ -318,8 +335,22 @@ export function useEnergyState({
       setEnergyIntensity(intensity)
     }
 
-    setEnergyMetrics({ rel, shortAvg, longAvg, sectionScore, flux01, brightness, bassRel })
-  }, [bassLevel, spectrumLevels, spectrumBins, enabled])
+    const nextMetrics = { rel, shortAvg, longAvg, sectionScore, flux01, brightness, bassRel }
+    const prevMetrics = metricsRef.current
+    const metricsChanged =
+      Math.abs(nextMetrics.rel - (prevMetrics.rel ?? 0)) >= 0.02
+      || Math.abs(nextMetrics.shortAvg - (prevMetrics.shortAvg ?? 0)) >= 0.015
+      || Math.abs(nextMetrics.longAvg - (prevMetrics.longAvg ?? 0)) >= 0.015
+      || Math.abs(nextMetrics.sectionScore - (prevMetrics.sectionScore ?? 0)) >= 0.015
+      || Math.abs(nextMetrics.flux01 - (prevMetrics.flux01 ?? 0)) >= 0.03
+      || Math.abs(nextMetrics.brightness - (prevMetrics.brightness ?? 0)) >= 0.03
+      || Math.abs(nextMetrics.bassRel - (prevMetrics.bassRel ?? 0)) >= 0.04
+
+    if (metricsChanged) {
+      metricsRef.current = nextMetrics
+      setEnergyMetrics(nextMetrics)
+    }
+  }, [bassLevel, enabled])
 
   // Return FX recommendations based on energy state
   const getEnergyFxRecommendation = () => {

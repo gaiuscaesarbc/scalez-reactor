@@ -6,14 +6,12 @@ import CompactPreview from './CompactPreview'
 import LiveFxMeters from './LiveFxMeters'
 
 const FX_KEYS = [
-  { key: 'glow', label: 'Glow', min: 0, max: 1, step: 0.01 },
   { key: 'strobe', label: 'Strobe', min: 0, max: 1, step: 0.01 },
   { key: 'shake', label: 'Shake', min: 0, max: 1, step: 0.01 },
   { key: 'brightness', label: 'Brightness', min: 0.5, max: 2, step: 0.01 },
 ]
 
 const AUDIO_LINK_KEYS = [
-  { key: 'glow', label: 'Glow' },
   { key: 'strobe', label: 'Strobe' },
   { key: 'shake', label: 'Shake' },
   { key: 'brightness', label: 'Brightness' },
@@ -61,8 +59,13 @@ export default memo(function MasterFxPanel({
   layers = [],
   smoothedEnergyFx = {},
   smoothedDropFx = {},
+  workspace = 'fx',
 }) {
   const [showRecentDrop, setShowRecentDrop] = useState(false)
+  const showVisualSection = workspace === 'fx' || workspace === 'debug'
+  const showAudioSection = workspace === 'fx' || workspace === 'audio' || workspace === 'debug'
+  const showSystemActions = workspace !== 'audio'
+  const panelTitle = workspace === 'audio' ? 'Audio Workspace' : 'Master FX'
 
   useEffect(() => {
     if (!recentDropEvent?.timestamp) {
@@ -77,26 +80,30 @@ export default memo(function MasterFxPanel({
     <section className="bottom-panel panel-glass">
       <div className="bottom-panel__header">
         <div>
-          <h2>Master FX</h2>
+          <h2>{panelTitle}</h2>
           <div className="hotkey-hint">Space=Blackout R=Reset 1-9=L1 Shift+1-9=L2 Ctrl+1-9=L3</div>
         </div>
         <div className="bottom-panel__actions">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={safeMode}
-              onChange={(event) => onSafeModeChange(event.target.checked)}
-            />
-            Safe Mode
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={performanceModeEnabled}
-              onChange={(event) => onPerformanceModeChange?.(event.target.checked)}
-            />
-            Perf Mode
-          </label>
+          {showSystemActions && (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={safeMode}
+                onChange={(event) => onSafeModeChange(event.target.checked)}
+              />
+              Safe Mode
+            </label>
+          )}
+          {showSystemActions && (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={performanceModeEnabled}
+                onChange={(event) => onPerformanceModeChange?.(event.target.checked)}
+              />
+              Perf Mode
+            </label>
+          )}
           <label className="checkbox-label">
             <input
               type="checkbox"
@@ -210,16 +217,21 @@ export default memo(function MasterFxPanel({
               </select>
             </label>
           )}
-          <button type="button" className="danger-pill" onClick={onToggleBlackout}>
-            {blackout ? 'Disable Blackout' : 'Blackout'}
-          </button>
-          <button type="button" className="pill ghost" onClick={onReset}>
-            Reset FX
-          </button>
+          {showSystemActions && (
+            <button type="button" className="danger-pill" onClick={onToggleBlackout}>
+              {blackout ? 'Disable Blackout' : 'Blackout'}
+            </button>
+          )}
+          {showSystemActions && (
+            <button type="button" className="pill ghost" onClick={onReset}>
+              Reset FX
+            </button>
+          )}
         </div>
       </div>
 
       <div className="master-fx-grid">
+        {showVisualSection && (
         <div className="fx-section">
           <h3>Visual FX</h3>
           <CompactPreview
@@ -230,6 +242,7 @@ export default memo(function MasterFxPanel({
             energySystemEnabled={energySystemEnabled}
             energyState={energyState}
             blackout={blackout}
+            liveVideoEnabled={false}
           />
           <div className="fx-grid">
             {FX_KEYS.map((fx) => (
@@ -247,68 +260,6 @@ export default memo(function MasterFxPanel({
                 />
               </label>
             ))}
-          </div>
-
-          <div className="audio-link-card">
-            <div className="audio-link-card__title">Kaleidoscope</div>
-            <label className="audio-setting">
-              <span>
-                Amount: <strong>{(masterFx.kaleido ?? 0).toFixed(2)}</strong>
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={masterFx.kaleido ?? 0}
-                onChange={(event) => onFxChange('kaleido', Number(event.target.value))}
-              />
-            </label>
-            <label className="audio-setting">
-              <span>
-                Segments: <strong>{Math.round(masterFx.kaleidoSegments ?? 6)}</strong>
-              </span>
-              <input
-                type="range"
-                min="3"
-                max="18"
-                step="1"
-                value={masterFx.kaleidoSegments ?? 6}
-                onChange={(event) => onFxChange('kaleidoSegments', Number(event.target.value))}
-              />
-            </label>
-            <label className="audio-setting">
-              <span>
-                Spin: <strong>{(masterFx.kaleidoSpin ?? 0).toFixed(2)}</strong>
-              </span>
-              <input
-                type="range"
-                min="-1"
-                max="1"
-                step="0.01"
-                value={masterFx.kaleidoSpin ?? 0}
-                onChange={(event) => onFxChange('kaleidoSpin', Number(event.target.value))}
-              />
-            </label>
-            <label className="audio-setting">
-              <span>
-                Audio Morph: <strong>{(masterFx.kaleidoAudio ?? 0).toFixed(2)}</strong>
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={masterFx.kaleidoAudio ?? 0}
-                onChange={(event) => onFxChange('kaleidoAudio', Number(event.target.value))}
-              />
-            </label>
-            <BandPicker
-              label="Kaleido Band"
-              value={masterFx.kaleidoSource || 'mid'}
-              onChange={(band) => onFxChange('kaleidoSource', band)}
-              spectrumRef={audioPanel?.spectrumRef}
-            />
           </div>
 
           {energySystemEnabled && (
@@ -329,8 +280,9 @@ export default memo(function MasterFxPanel({
             dropStrobeCount={dropStrobeCount}
           />
         </div>
+        )}
 
-        {audioPanel && (
+        {audioPanel && showAudioSection && (
           <div className="audio-section">
             <h3>Audio Analysis</h3>
             <AudioMeter
@@ -472,7 +424,9 @@ export default memo(function MasterFxPanel({
       </div>
 
       <p className="bottom-panel__note">
-        Bass energy can now be linked into glow, strobe, shake, and brightness. Arrow keys scroll clip grids.
+        {workspace === 'audio'
+          ? 'Tune routing, EQ, and reactive links without cluttering the performance deck.'
+          : 'Bass energy can be linked into strobe, shake, and brightness. Arrow keys scroll clip grids.'}
       </p>
     </section>
   )

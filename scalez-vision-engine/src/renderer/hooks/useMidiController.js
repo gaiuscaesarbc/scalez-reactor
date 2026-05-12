@@ -2,21 +2,36 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 const MIDI_DEVICE_KEY = 'scalez.midi.lastDeviceId'
 
+function areMappingsEqual(left, right) {
+  if (left === right) return true
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') {
+    return false
+  }
+
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  if (leftKeys.length !== rightKeys.length) return false
+
+  return leftKeys.every((key) => {
+    const leftValue = left[key]
+    const rightValue = right[key]
+    if (!rightValue) return false
+    return JSON.stringify(leftValue) === JSON.stringify(rightValue)
+  })
+}
+
 export function useMidiController() {
   const [midiAvailable, setMidiAvailable] = useState(false)
   const [hasPermission, setHasPermission] = useState(false)
   const [midiInputs, setMidiInputs] = useState([])
   const [selectedInput, setSelectedInput] = useState(null)
   const [isLearning, setIsLearning] = useState(false)
-  const [learnMode, setLearnMode] = useState(null) // 'button', 'knob', etc
+  const [learnMode, setLearnMode] = useState(null)
   const [learnConfig, setLearnConfig] = useState(null)
-  const [mappings, setMappings] = useState({}) // { midiKey: { type, action, layerIndex?, slotIndex?, ... } }
+  const [mappings, setMappings] = useState({})
   const midiAccessRef = useRef(null)
   const inputsRef = useRef({})
   const learnResolverRef = useRef(null)
-  // Refs hold current values so the onmidimessage closure never goes stale.
-  // isLearningRef is set synchronously (not via useEffect) to prevent a
-  // race where a fast MIDI press arrives before React flushes the effect.
   const isLearningRef = useRef(false)
   const mappingsRef = useRef({})
   const selectedInputRef = useRef(null)
@@ -24,30 +39,64 @@ export function useMidiController() {
   // mappingsRef stays in sync so MIDI handlers never close over stale values
   useEffect(() => { mappingsRef.current = mappings }, [mappings])
 
-  // Check Web MIDI support
-  useEffect(() => {
-    const checkMidiSupport = async () => {
-      if (navigator.requestMIDIAccess) {
-        setMidiAvailable(true)
-        // Try to request without user prompt first
-        try {
-          const access = await navigator.requestMIDIAccess({ sysex: false })
-          midiAccessRef.current = access
-          setHasPermission(true)
-          updateInputList(access)
+  // ---------------------------------------------------------------------------
+  // attachMidiListener: detaches any existing onmidimessage handler on the
+  // previously selected input, then attaches a new handler to the target device.
+  //
+  // The handler dispatches a 'midi-command' CustomEvent on window so that
+  // ControlShell's useEffect listener can respond without any prop drilling.
+  // Using a ref-stable callback avoids stale closure issues in updateInputList
+  // and selectInput, which are both defined with empty/stable dep arrays.
+  // ---------------------------------------------------------------------------
+  const attachMidiListener = useCallback((deviceId, inputsMap) => {
+    const inputs = inputsMap || inputsRef.current
 
-          // Listen for device connection/disconnection
-          access.addEventListener('statechange', (event) => {
-            updateInputList(access)
-          })
-        } catch (err) {
-          // Permission denied or not granted yet
-          setHasPermission(false)
-        }
-      }
+    // Detach listener from the previously selected input (if any).
+    const prevId = selectedInputRef.current
+    if (prevId && prevId !== deviceId && inputs[prevId]) {
+      inputs[prevId].onmidimessage = null
     }
-    checkMidiSupport()
-  }, [])
+
+    const input = inputs[deviceId]
+    if (!input) {
+      return
+    }
+
+    input.onmidimessage = (event) => {
+      const [status, data1, data2] = event.data
+      const type = status >> 4
+      const channel = status & 0x0f
+
+      // Only handle note-on (0x9) and control-change (0xB) messages.
+      if (type !== 0x9 && type !== 0xB) {
+        return
+      }
+
+      const midiKey = type === 0xB ? `cc_${data1}` : `note_${data1}`
+      const midiValue = data2
+
+      // In learn mode: resolve the pending promise and record the mapping.
+      if (isLearningRef.current && learnResolverRef.current) {
+        const resolver = learnResolverRef.current
+        learnResolverRef.current = null
+        isLearningRef.current = false
+        resolver({ midiKey, midiValue, type: type === 0x9 ? 'button' : 'knob' })
+        return
+      }
+
+      // Normal mode: look up the mapping and dispatch a command event.
+      const mapping = mappingsRef.current[midiKey]
+      if (!mapping) {
+        return
+      }
+
+      window.dispatchEvent(
+        new CustomEvent('midi-command', {
+          detail: { mapping, midiValue, midiKey },
+        }),
+      )
+    }
+  }, []) // stable — reads from refs, never needs to close over state
 
   const updateInputList = useCallback((access) => {
     const inputs = []
@@ -73,7 +122,29 @@ export function useMidiController() {
       setSelectedInput(savedId)
       selectedInputRef.current = savedId
     }
-  }, []) // attachMidiListener defined below via ref pattern — safe here
+  }, [attachMidiListener])
+
+  // Check Web MIDI support
+  useEffect(() => {
+    const checkMidiSupport = async () => {
+      if (navigator.requestMIDIAccess) {
+        setMidiAvailable(true)
+        try {
+          const access = await navigator.requestMIDIAccess({ sysex: false })
+          midiAccessRef.current = access
+          setHasPermission(true)
+          updateInputList(access)
+
+          access.addEventListener('statechange', () => {
+            updateInputList(access)
+          })
+        } catch {
+          setHasPermission(false)
+        }
+      }
+    }
+    checkMidiSupport()
+  }, [updateInputList])
 
   // Request MIDI permission
   const requestPermission = useCallback(async () => {
@@ -83,8 +154,7 @@ export function useMidiController() {
       setHasPermission(true)
       updateInputList(access)
 
-      // Listen for device changes
-      access.addEventListener('statechange', (event) => {
+      access.addEventListener('statechange', () => {
         updateInputList(access)
       })
 
@@ -96,57 +166,7 @@ export function useMidiController() {
     }
   }, [updateInputList])
 
-  // Attach the MIDI message handler to a specific device.
-  // Uses refs only — safe to call from statechange callbacks without stale closures.
-  const attachMidiListener = useCallback((deviceId, inputsMap) => {
-    const map = inputsMap || inputsRef.current
-    const input = map[deviceId]
-    if (!input) {
-      return
-    }
-
-    input.onmidimessage = (event) => {
-      const [status, note, velocity] = event.data
-      const isNoteOn = (status & 0xf0) === 0x90
-      const isNoteOff = (status & 0xf0) === 0x80
-      const isCC = (status & 0xf0) === 0xb0
-
-      let midiKey
-      let midiValue = null
-
-      if (isNoteOn || isNoteOff) {
-        midiKey = `note_${note}`
-        midiValue = isNoteOn ? velocity : 0
-      } else if (isCC) {
-        midiKey = `cc_${note}`
-        midiValue = velocity
-      }
-
-      if (!midiKey) {
-        return
-      }
-
-      // If in learn mode, capture the first event and resolve the promise.
-      // isLearningRef is set synchronously in startLearn so this is never stale.
-      if (isLearningRef.current && learnResolverRef.current) {
-        learnResolverRef.current({ midiKey, midiValue })
-        learnResolverRef.current = null
-        return
-      }
-
-      // Execute mapped command using latest mappings from ref
-      const currentMappings = mappingsRef.current
-      if (currentMappings[midiKey]) {
-        const mapping = currentMappings[midiKey]
-        const evt = new CustomEvent('midi-command', {
-          detail: { mapping, midiKey, midiValue },
-        })
-        window.dispatchEvent(evt)
-      }
-    }
-  }, [])
-
-  // Set selected input and attach listener — persists choice for auto-reconnect
+  // Set selected input and attach listener
   const selectInput = useCallback((deviceId) => {
     attachMidiListener(deviceId)
     setSelectedInput(deviceId)
@@ -158,8 +178,7 @@ export function useMidiController() {
     }
   }, [attachMidiListener])
 
-  // Start learn mode — set isLearningRef synchronously so the onmidimessage
-  // handler sees it immediately, even before React flushes the state update.
+  // Start learn mode
   const startLearn = useCallback((type, config) => {
     isLearningRef.current = true
     setIsLearning(true)
@@ -167,7 +186,9 @@ export function useMidiController() {
     setLearnConfig(config)
 
     return new Promise((resolve) => {
-      learnResolverRef.current = resolve
+      learnResolverRef.current = (result) => {
+        resolve(result)
+      }
     })
   }, [])
 
@@ -182,10 +203,20 @@ export function useMidiController() {
 
   // Add or update a mapping
   const setMapping = useCallback((midiKey, mapping) => {
-    setMappings((prev) => ({
-      ...prev,
-      [midiKey]: mapping,
-    }))
+    setMappings((prev) => {
+      const next = { ...prev }
+
+      if (mapping?.action && mapping.action !== 'clip-slot') {
+        Object.entries(next).forEach(([existingKey, existingMapping]) => {
+          if (existingKey !== midiKey && existingMapping?.action === mapping.action) {
+            delete next[existingKey]
+          }
+        })
+      }
+
+      next[midiKey] = mapping
+      return next
+    })
   }, [])
 
   // Remove a specific mapping
@@ -204,9 +235,8 @@ export function useMidiController() {
 
   // Load mappings from show file
   const loadMappings = useCallback((loadedMappings) => {
-    if (loadedMappings && typeof loadedMappings === 'object') {
-      setMappings(loadedMappings)
-    }
+    if (!loadedMappings || typeof loadedMappings !== 'object') return
+    setMappings((prev) => (areMappingsEqual(prev, loadedMappings) ? prev : loadedMappings))
   }, [])
 
   // Export mappings for saving
